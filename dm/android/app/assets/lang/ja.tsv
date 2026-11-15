@@ -377,3 +377,5 @@ NaN fix + textures: the same, and broken values read from textures become 0 too.
 This version translates the game's shaders differently: updating them now. Your files aren't needed and your save is kept. Keep this screen open; it takes about as long as the shader step of a setup.	このバージョンではゲームのシェーダーの変換方法が変わりました：今すぐ更新します。ファイルは不要で、セーブデータはそのままです。この画面を開いたままにしてください。セットアップのシェーダー手順と同じくらい時間がかかります。
 Setting up	セットアップ
 Keep the phone cooler: half the workers (setup takes longer)	端末を熱くしにくくする：ワーカーを半分にします（セットアップに時間がかかります）
+Updating the shaders for this app version: your files aren't needed and your save is kept.	このアプリのバージョン用にシェーダーを更新しています：ファイルは不要で、セーブデータはそのままです。
+Updating the shaders	シェーダーを更新中

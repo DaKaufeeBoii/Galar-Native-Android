@@ -170,7 +170,7 @@ public final class SetupActivity extends Activity {
         bar.setMax(600); bar.setProgress(200);
         status.setText(T.t(this, "This version translates the game's shaders differently: updating them now. Your files aren't needed and your save is kept. Keep this screen open; it takes about as long as the shader step of a setup."));
         List<String> cmd = new ArrayList<>(); cmd.add("--shaders-only");
-        resumes = 0; workerCap = 0; runFullSetup(cmd);
+        shadersOnlyRun = true; setup.setText(T.t(this, "Updating the shaders")); resumes = 0; workerCap = 0; runFullSetup(cmd);
     }
     // The setup screen, in the launcher's look: what a player sees first after installing. Three numbered steps (game files, keys, set up), then Play once the game is
     //   set up; the rest (which game, save data, the home screen shortcut, the graphics driver) under them, the driver folded away until asked for
@@ -723,6 +723,7 @@ public final class SetupActivity extends Activity {
     }
     private void startSetup(boolean allowDamaged) {
         if (running || games.isEmpty()) return;
+        shadersOnlyRun = false;
         offerAnyway = false; anyway.setVisibility(android.view.View.GONE);
         String mixed = mixedGames(); if (mixed != null) { status.setText(mixed); return; }
         for (String g : games) if (!new File(g).canRead()) { status.setText(T.t(this, "Could not read %s.", new File(g).getName()) + " " + T.t(this, "Tap Clear and choose your files again.")); return; }
@@ -818,7 +819,9 @@ public final class SetupActivity extends Activity {
     // What the setup is doing, with the time it has been running under it (a ticker, every second): an hour-long step whose number stays at 99% (the last shaders,
     //   then the writing of the results, #56) still shows that it is alive
     private String runText = ""; private long runStart; private final android.os.Handler ticker = new android.os.Handler(android.os.Looper.getMainLooper());
-    private void show(String s) { runText = s; tick(); }
+    // A shaders-only update shows what it is above its step lines: players read the bare "Step 4 of 6" as a full setup again (#276 #278 #279)
+    private boolean shadersOnlyRun;
+    private void show(String s) { runText = shadersOnlyRun ? T.t(this, "Updating the shaders for this app version: your files aren't needed and your save is kept.") + "\n" + s : s; tick(); }
     private void tick() {
         if (!running) { status.setText(runText); return; }
         long t = (android.os.SystemClock.elapsedRealtime() - runStart) / 1000;
