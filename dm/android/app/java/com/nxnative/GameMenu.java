@@ -316,6 +316,11 @@ public final class GameMenu {
             // Lowest: handheld mode with the game's 3D render scale capped (Pokémon Sword / Shield: the engine's hle_resscale.c; Scarlet / Violet have no such scale)
             { "lowest", t(a, "Lowest"), t(a, GameSettings.paldea(a) ? "Lowest: handheld mode, 3D at 960x540, coolest" : "Lowest: 3D at 960x540, coolest") } };
         choice(a, "DM_GRAPHICS", t(a, "Graphics"), GameSettings.paldea(a) ? java.util.Arrays.copyOf(gfx, 4) : gfx);
+        // the game's own 3D render scale, capped (android_main.c DM_RES_CAP, hle_resscale.c): Sword / Shield, at once. The HUD and text stay sharp; only the 3D is drawn smaller
+        if (!GameSettings.paldea(a)) choice(a, "DM_RES_CAP", t(a, "3D render scale"), new String[][] {
+            { "", t(a, "Auto"), t(a, "Auto: what the Graphics setting gives, lowered by itself when the phone is hot") },
+            { "0.90", "90 %", "" }, { "0.80", "80 %", "" }, { "0.75", "75 %", "" }, { "0.66", "66 %", "" },
+            { "0.50", "50 %", t(a, "50 %: the 3D at half size, the coolest and fastest (text and menus stay sharp)") } });
         if (GameSettings.has60(a)) choice(a, "DM_FPS_TARGET", t(a, "Frame rate"), new String[][] { { "", t(a, "Auto"), t(a, "Auto: this phone gets %s fps", p[5]) },
             { "30", "30 fps", t(a, "30 fps, as the game is made") }, { "60", "60 fps", GameSettings.paldea(a) ? t(a, "Up to 60 fps: faster where the phone can, game speed stays right (Fl4sh's Dynamic FPS mod)")
                                                                                                : t(a, "60 fps: smoother; drops to 720p when needed to hold 60 (with Graphics on Auto or Adaptive)") } });

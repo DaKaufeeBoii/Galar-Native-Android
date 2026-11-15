@@ -377,3 +377,6 @@ NaN fix + textures: the same, and broken values read from textures become 0 too.
 This version translates the game's shaders differently: updating them now. Your files aren't needed and your save is kept. Keep this screen open; it takes about as long as the shader step of a setup.	Cette version traduit les shaders du jeu autrement : mise à jour en cours. Tes fichiers ne sont pas nécessaires et ta sauvegarde est conservée. Garde cet écran ouvert ; cela prend autant de temps que l'étape des shaders de l'installation.
 Setting up	Installation
 Keep the phone cooler: half the workers (setup takes longer)	Garder le téléphone plus frais : moitié moins de processus (l'installation est plus longue)
+3D render scale	Échelle du rendu 3D
+Auto: what the Graphics setting gives, lowered by itself when the phone is hot	Auto : ce que donne le réglage Graphismes, abaissé tout seul quand le téléphone chauffe
+50 %: the 3D at half size, the coolest and fastest (text and menus stay sharp)	50 % : la 3D à moitié de sa taille, le plus frais et le plus rapide (le texte et les menus restent nets)
