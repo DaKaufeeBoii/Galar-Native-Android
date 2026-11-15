@@ -122,6 +122,7 @@ def main():
     ap.add_argument('--mod-shaders', help="the RomFS folders of the mods that are on, ':'-separated: their new shaders translated into the pack")
     ap.add_argument('--shaders-only', action='store_true', help='translate the shaders again from the game already set up in --out (its RomFS and patched/main.patched.bin): '
                     'no dump and no keys, for an app version whose shader translation changed')
+    ap.add_argument('--scratch', help='the folder for the shader steps\' many small files (the scan\'s packages, the translation, its cache, the reflection, the raw pack): the app\'s private storage, where a file costs a fraction of what it does in shared storage (#262: 10,000 small files written in 0.5 s there, 26 s in /sdcard); default --work')
     ap.add_argument('--resume', action='store_true', help='go on from the shader translation when an earlier run of this setup got that far (resume.json in --work)')
     a = ap.parse_args()
     if a.mod_shaders is not None: return mod_shaders(a)
@@ -131,6 +132,7 @@ def main():
         return captures(a)
     if not a.shaders_only and not (a.keys and a.base): ap.error('--keys and --base are needed (or --captures, or --shaders-only)')
     os.makedirs(a.work, exist_ok=True); os.makedirs(a.out, exist_ok=True)
+    S = a.scratch or a.work; os.makedirs(S, exist_ok=True)   # the shader steps' small files (--scratch); setup.log, the unpacked game and the marks stay in --work
     log = open(os.path.join(a.work, 'setup.log'), 'a', buffering=1)
     py = sys.executable; env = dict(os.environ, PYTHONUNBUFFERED='1')
     env['PATH'] = a.bin + os.pathsep + env.get('PATH', '')
@@ -176,14 +178,14 @@ def main():
     # --resume (the setup screen, after Android stopped this setup, #51 / #52: exit 137 during the shader translation): resume.json, written once the shader scan is done,
     #   says what steps 1-3 found; the unpacked game, the rewritten code and the scanned shaders are still in place, and the translation goes on from what it had done
     state = os.path.join(a.work, 'resume.json'); resumed = False
-    if a.resume and os.path.isfile(state) and (a.shaders_only or os.path.isfile(os.path.join(ex, 'ExeFS', 'main'))) and os.path.isdir(os.path.join(a.work, 'shader_pkg')):
+    if a.resume and os.path.isfile(state) and (a.shaders_only or os.path.isfile(os.path.join(ex, 'ExeFS', 'main'))) and os.path.isdir(os.path.join(S, 'shader_pkg')):
         import json
         st = json.load(open(state, encoding='utf-8'))
         a.out = st['out']; games = st['games']; files = st['files']
         if st.get('game'):
             PROFILE = _game.load(st['game']); NAME = PROFILE.get('name'); env['DM_GAME'] = os.environ['DM_GAME'] = st['game']
             print(f'GAME {st["game"].upper()}', flush=True)
-        exefs, romfs, pkg, pat = os.path.join(ex, 'ExeFS'), os.path.join(ex, 'RomFS'), os.path.join(a.work, 'shader_pkg'), os.path.join(a.out, 'patched')
+        exefs, romfs, pkg, pat = os.path.join(ex, 'ExeFS'), os.path.join(ex, 'RomFS'), os.path.join(S, 'shader_pkg'), os.path.join(a.out, 'patched')
         if a.shaders_only: romfs = os.path.join(a.out, 'RomFS')   # (a shaders-only update reads the game's own RomFS: nothing was unpacked)
         resumed = True; log.write(f'== {time.strftime("%H:%M:%S")} resumed after a stop: steps 1-3 kept, the translation goes on\n')
     # --shaders-only: an app version whose shader translation changed needs only steps 3-6. The game set up before already holds what they read: RomFS/ (moved there
@@ -194,7 +196,7 @@ def main():
     if not resumed and a.shaders_only:
         files, games = [], []
         romfs, exefs = os.path.join(a.out, 'RomFS'), os.path.join(ex, 'ExeFS')
-        main_src, pkg = os.path.join(a.out, 'patched', 'main.patched.bin'), os.path.join(a.work, 'shader_pkg')
+        main_src, pkg = os.path.join(a.out, 'patched', 'main.patched.bin'), os.path.join(S, 'shader_pkg')
         pat = os.path.join(a.out, 'patched')   # (the Trinity games' shader scan runs the rewritten modules: step 3)
         if not (os.path.isdir(romfs) and os.path.isfile(main_src)):
             raise RuntimeError('this game was set up without the files a shaders-only update reads (RomFS, patched/main.patched.bin): choose your files and set it up again')
@@ -276,7 +278,7 @@ def main():
 
     if not resumed:
         step(3)
-        pkg = os.path.join(a.work, 'shader_pkg'); shutil.rmtree(pkg, ignore_errors=True)
+        pkg = os.path.join(S, 'shader_pkg'); shutil.rmtree(pkg, ignore_errors=True)
         # the shaders an earlier run of the game captured (nvn_capture/ in the game dir, android_main.c DM_NVN_CAPTURE) go into the new pack too: the game saves each
         # one only once, so a pack rebuilt without them would never get them back
         # Trinity games (Violet: every file of arc/data.trpfs is Oodle-compressed): the scan decodes them with the game's own decoder, dmoodle running the rewritten
@@ -314,42 +316,42 @@ def main():
         try: os.link(dp, tmp)   # (no extra space: a later merge into either game writes a new file and leaves the other's alone)
         except OSError: shutil.copyfile(dp, tmp)
         if missing:
-            vk = os.path.join(a.work, 'vk', 'b-' + chain); cache = os.path.join(a.work, 'shader_cache')
+            vk = os.path.join(S, 'vk', 'b-' + chain); cache = os.path.join(S, 'shader_cache')
             kept = not resumed and translation_kept(a.work, chain)
             if kept: log.write('the shaders the last setup of this dump translated are kept: only what is missing is translated\n')
             if not resumed and not kept: shutil.rmtree(os.path.dirname(vk), ignore_errors=True); shutil.rmtree(cache, ignore_errors=True)
             os.makedirs(vk, exist_ok=True)
             gate = os.path.isfile(tool('dmsh_gate')) and os.path.isfile('/proc/meminfo')
-            xenv = dict(XLATE=tool('dmsh_gate'), DM_GATE_EXEC=tool('dmsh_xlate'), DM_GATE_SLOTS=env.get('J', '8'), DM_GATE_DIR=a.work) if gate else dict(XLATE=tool('dmsh_xlate'))
+            xenv = dict(XLATE=tool('dmsh_gate'), DM_GATE_EXEC=tool('dmsh_xlate'), DM_GATE_SLOTS=env.get('J', '8'), DM_GATE_DIR=S) if gate else dict(XLATE=tool('dmsh_xlate'))
             run([py, os.path.join(DM, 'gfx/tools/dmsh_build.py'), pkg, cache, *missing], retry_killed=3,
-                env=dict(env, DMSH_SPV_ONLY='1', VK_SPV_OUT=vk, **xenv, DMSH_CAS=os.path.join(a.work, 'cas'), WORK=a.work,
+                env=dict(env, DMSH_SPV_ONLY='1', VK_SPV_OUT=vk, **xenv, DMSH_CAS=os.path.join(S, 'cas'), WORK=S,
                          DMSH_SOURCE_MAP=os.path.join(a.work, 'shader_map.found.tsv'), DMSH_FACTS=os.path.join(a.work, 'shader_facts.found.tsv'),
                          DMSH_PAIRS=os.path.join(a.work, 'shader_pairs.found.tsv'), MAIN=os.path.join(exefs, 'main')))
             built = os.path.join(cache, 'b-' + chain)
             write_translated(a.work, chain)
             step(5)
             reflect(vk, built)
-            small = os.path.join(a.work, 'shaders.new.pak'); run([py, os.path.join(DM, 'android/tools/spv_pak.py'), vk, small])
+            small = os.path.join(S, 'shaders.new.pak'); run([py, os.path.join(DM, 'android/tools/spv_pak.py'), vk, small])
             pak_merge(tmp, small); os.remove(small)
         else: step(5)
         os.replace(tmp, target)
     else:
-        vk = os.path.join(a.work, 'vk', 'b-' + chain); cache = os.path.join(a.work, 'shader_cache')
+        vk = os.path.join(S, 'vk', 'b-' + chain); cache = os.path.join(S, 'shader_cache')
         kept = not resumed and translation_kept(a.work, chain)
         if kept: log.write('the shaders the last setup of this dump translated are kept: only what is missing is translated\n')
         if not resumed and not kept:
             shutil.rmtree(os.path.dirname(vk), ignore_errors=True); shutil.rmtree(cache, ignore_errors=True)
         if not resumed:
-            for d in glob.glob(os.path.join(a.work, 'dmsh_*')): shutil.rmtree(d, ignore_errors=True)   # an interrupted run's scratch dir would count toward the progress
+            for d in glob.glob(os.path.join(S, 'dmsh_*')): shutil.rmtree(d, ignore_errors=True)   # an interrupted run's scratch dir would count toward the progress
         os.makedirs(vk, exist_ok=True)
         stop = threading.Event(); found = os.path.join(a.work, 'shader_map.found.tsv')
-        threading.Thread(target=watch_translation, args=(found, a.work, os.path.join(cache, 'b-' + chain), stop), daemon=True).start()
+        threading.Thread(target=watch_translation, args=(found, S, os.path.join(cache, 'b-' + chain), stop), daemon=True).start()
         # the translators go through dmsh_gate when the app has it: each beyond the first starts only while the phone has the memory for it (dmsh_gate.c)
         gate = os.path.isfile(tool('dmsh_gate')) and os.path.isfile('/proc/meminfo')
-        xenv = dict(XLATE=tool('dmsh_gate'), DM_GATE_EXEC=tool('dmsh_xlate'), DM_GATE_SLOTS=env.get('J', '8'), DM_GATE_DIR=a.work) if gate else dict(XLATE=tool('dmsh_xlate'))
+        xenv = dict(XLATE=tool('dmsh_gate'), DM_GATE_EXEC=tool('dmsh_xlate'), DM_GATE_SLOTS=env.get('J', '8'), DM_GATE_DIR=S) if gate else dict(XLATE=tool('dmsh_xlate'))
         log.write(f'translators: {env.get("J", "8")} at most, ' + ('started as memory allows (dmsh_gate)\n' if gate else 'all at once (no dmsh_gate)\n'))
         try: run([py, os.path.join(DM, 'gfx/tools/dmsh_build.py'), pkg, cache], retry_killed=3,
-            env=dict(env, DMSH_SPV_ONLY='1', VK_SPV_OUT=vk, **xenv, DMSH_CAS=os.path.join(a.work, 'cas'), WORK=a.work,
+            env=dict(env, DMSH_SPV_ONLY='1', VK_SPV_OUT=vk, **xenv, DMSH_CAS=os.path.join(S, 'cas'), WORK=S,
                      DMSH_SOURCE_MAP=os.path.join(a.work, 'shader_map.found.tsv'),
                      DMSH_FACTS=os.path.join(a.work, 'shader_facts.found.tsv'),
                      DMSH_PAIRS=os.path.join(a.work, 'shader_pairs.found.tsv'),
@@ -361,7 +363,7 @@ def main():
         step(5)
         reflect(vk, built)
         # the pack compressed (zlib per shader, the engine inflates each as it loads it: nvn_vk.c pak_blob): about 3.4 times smaller on the phone (Violet 2.9 GB → 0.85 GB, Sword 2.3 → 0.7)
-        raw = os.path.join(a.work, 'shaders.raw.pak')
+        raw = os.path.join(S, 'shaders.raw.pak')
         run([py, os.path.join(DM, 'android/tools/spv_pak.py'), vk, raw])
         part = os.path.join(a.out, 'shaders.pak.part')   # written beside it, then swapped in: a setup stopped while writing leaves the old pack whole
         run([py, os.path.join(DM, 'android/tools/spv_pak.py'), '--compress', raw, part]); os.replace(part, os.path.join(a.out, 'shaders.pak'))
@@ -380,6 +382,7 @@ def main():
     if os.path.realpath(rom) != os.path.realpath(romfs):
         shutil.rmtree(rom, ignore_errors=True); os.replace(romfs, rom)   # same storage: a rename, nothing copied
     for d in ('shader_pkg', 'cas', 'vk', 'shader_cache', 'extract', 'aoc'): shutil.rmtree(os.path.join(a.work, d), ignore_errors=True)   # only setup.log stays
+    if S != a.work: shutil.rmtree(S, ignore_errors=True)
     try: os.remove(translated_mark(a.work))   # (its translation went with shader_cache)
     except FileNotFoundError: pass
     # the new pack holds every capture there is, so the launcher's list of captures already added is stale: the next start checks them against the pack again
