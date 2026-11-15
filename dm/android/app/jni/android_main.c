@@ -657,7 +657,7 @@ void dm_set_opmode(int m);   // host/hle_oe.c: tells the game the console mode c
 //   again after a calm, steady spell, a minute the first time and twice as long after each fall back (up to 16 minutes), so a scene that cannot hold it does not
 //   flip between the two. Game speed stays right meanwhile (hle_nvn.c vstep_tick). Graphics on High, Low or Lowest chosen by hand is left alone
 // Games whose render size is fixed at start (Pokémon Sword / Shield: a mode change while playing does not change it, hle_resscale.c) step the game's own 3D render
-//   scale instead, one step at a time: 100, 85, 70, 60 % of what the game asks, in width and height (72, 49, 36 % of the pixels). Down after the same two checks short
+//   scale instead, one step at a time: 100, 85, 67, 60 % of what the game asks, in width and height (72, 44, 36 % of the pixels); Auto starts at 85 % and settles from there. Down after the same two checks short
 //   of the target, or while hot at most every 30 s (heat follows slowly); up one step after the same calm, steady spell, with the same doubling wait. Every step down is
 //   checked 10 s later, as a lower scale does not always help: on a strong GPU its governor lowers the clock with the load and frames can get longer (Galaxy S25+: 43
 //   against 36 ms walking at 60 %, hle_resscale.c). A step for a short frame rate that gained under 1 fps (the slowdown is not the GPU's: the CPU, a clock cap while
@@ -665,9 +665,10 @@ void dm_set_opmode(int m);   // host/hle_oe.c: tells the game the console mode c
 // A scene that keeps the game's full size (the menus showing Pokémon models: the game's own mode, hle_resscale.c) is drawn at full size whatever the step: no step is
 //   taken or judged there. A step on trial when one opens is kept without a verdict, and the short-frame count starts again
 int dm_res_scale_ready(void), dm_res_scale_applies(void); void dm_res_factor_set(float f);   // host/hle_resscale.c
-static const float k_res_steps[] = { 1.0f, 0.85f, 0.7f, 0.6f };
+static const float k_res_steps[] = { 1.0f, 0.85f, 0.667f, 0.6f };   // (0.667: 720p from 1080p)
 #define NRES ((int)(sizeof k_res_steps / sizeof k_res_steps[0]))
-#define RES_HOT 2   // the step heat goes straight to: 70 %, about 720p from 1080p (the upscaler brings it back to the screen's size)
+#define RES_HOT 2   // the step heat goes straight to: 720p from 1080p (the upscaler brings it back to the screen's size)
+#define RES_START 1   // where Auto starts: 85 % (between 720p and 1080p), up to the game's full size after a calm minute at a steady 30, down to 720p when short (DM_RES_START=0..3 picks another step)
 static int g_fps_guard;   // set at start (fps_guard_init): the target, 0 off
 static void fps_guard_init(void) {
     const char *t = getenv("DM_FPS_TARGET"), *off = getenv("DM_FPS_GUARD"), *g = getenv("DM_GRAPHICS");
@@ -702,6 +703,13 @@ static void graphics_auto(void) {
         if (nogain > 0) nogain--;
         if (noheat > 0) noheat--;
         if (!dm_res_scale_applies()) { probe = 0; slow = 0; return; }   // (a scene at the game's full size: see above)
+        // Start at 85 % and settle: a phone that holds 30 there for a calm minute goes up to the game's full size, one short of it goes down to 720p, and back when a step falls
+        //   short, so each phone settles at the most it holds at a steady 30. Starting at full size and stepping down only after two short checks let slower phones
+        //   (Xclipse 530, Mali, a hot Dimensity) spend minutes under 30, which the game's fixed step turns into slow motion (#289 #299 #300)
+        { static int started; if (!started) { started = 1; const char *e = getenv("DM_RES_START"); int st = e && *e ? atoi(e) : RES_START; if (st < 0) st = 0; if (st > NRES - 1) st = NRES - 1;
+              if (st > 0) { lv = st; dm_res_factor_set(k_res_steps[lv]); cool = 0; held = 0; slow = 0; since = 0;
+                            fprintf(stderr, "fps guard: starting at 3D render scale %d %% (%dp); a step up after each calm minute at a steady 30\n", (int)(k_res_steps[lv] * 100 + 0.5f), (int)(1080 * k_res_steps[lv] + 0.5f)); }
+              return; } }
         // a step is tried for 15 s, then kept only if the average gained clearly (1.5 fps, or 6 %): a lower resolution only helps a GPU that is behind, not a CPU
         double gain_need = fps_was * 0.06 > 1.5 ? fps_was * 0.06 : 1.5;
         if (probe && !--probe && fps_avg > 1 && fps_was > 1 && lv > 0 && (probe_hot ? fps_avg < fps_was - 1.0 : fps_avg < fps_was + gain_need)) {   // the step did not help
@@ -714,11 +722,12 @@ static void graphics_auto(void) {
         }
         if (full) held++;
         if (held >= 24) wait = 12;   // two minutes held at this step: the next step down waits a minute again
-        int for_heat = hot && since >= 6 && !noheat && !probe, for_rate = slow >= 3 && !nogain && !probe;   // (one step at a time: the last one judged first)
+        int for_heat = hot && lv < RES_HOT && since >= 6 && !noheat && !probe,   // (heat alone stops at 720p; only a frame rate short of 30 goes lower)
+            for_rate = slow >= 3 && !nogain && !probe;   // (one step at a time: the last one judged first)
         if ((for_heat || for_rate) && lv < NRES - 1) {
             if (!for_heat && held < 24 && wait < 192) wait *= 2;   // short again soon after a step up: wait twice as long next time
             probe = 3; probe_hot = for_heat; fps_was = fps_avg > 1 ? fps_avg : fps;
-            lv++; if (for_heat && lv < RES_HOT) lv = RES_HOT;   // hot: straight to about 720p (70 % of 1080p), not one step every 30 s while the phone keeps heating up
+            lv++; if (for_heat && lv < RES_HOT) lv = RES_HOT;   // hot: straight to 720p (67 % of 1080p), not one step every 30 s while the phone keeps heating up
             dm_res_factor_set(k_res_steps[lv]); cool = 0; held = 0; slow = 0; since = 0;
             if (for_heat) fprintf(stderr, "graphics auto: the phone is hot: 3D render scale %d %% (about %dp)\n", (int)(k_res_steps[lv] * 100 + 0.5f), (int)(1080 * k_res_steps[lv] + 0.5f));
             else fprintf(stderr, "fps guard: %.1f fps, short of %d: 3D render scale %d %%; a step up after %d s steady\n", fps, g_fps_guard, (int)(k_res_steps[lv] * 100 + 0.5f), wait * 5);
