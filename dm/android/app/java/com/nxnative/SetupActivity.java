@@ -394,6 +394,9 @@ public final class SetupActivity extends Activity {
     // a driver package into the app's private storage (libadrenotools loads drivers only from there): its meta.json names the library
     private void installDriver(Uri u, String name) { status.setText(DriverPackages.install(this, u, name)); refresh(); }   // (DriverPackages: shared with the in-game menu)
     private static void deleteTree(File f) { File[] k = f.listFiles(); if (k != null) for (File c : k) deleteTree(c); f.delete(); }
+    // the shader steps' small files (setup_game.py --scratch): app-private storage, not setup_work in shared storage, where each file goes through Android's FUSE layer
+    //   (#262, an S25+: 10,000 small files written in 0.5 s in private storage, 26 s in shared storage; the setup writes about 130,000). The same partition: no less room
+    static File scratchDir(Context c, File game) { return new File(new File(c.getNoBackupFilesDir(), "setup_scratch"), game.getName()); }
     private static long treeSize(File f) { if (f.isFile()) return f.length(); long s = 0; File[] k = f.listFiles(); if (k != null) for (File c : k) s += treeSize(c); return s; }
     // What a setup that stopped leaves behind (#47: 26 GB for a 10 GB game): its unpacked game in setup_work (about 12 GB; any later setup unpacks the game again, so it
     //   is never read once the app has restarted) and its scan, and the loose shader folder (vk/) of setups made before the shader pack. Not while a setup runs, nor
@@ -408,10 +411,11 @@ public final class SetupActivity extends Activity {
                 File work = new File(game, "setup_work"), log = new File(work, "setup.log");
                 if (running || (log.isFile() && System.currentTimeMillis() - log.lastModified() < 10 * 60 * 1000L)) continue;
                 boolean keepXlate = new File(work, "translated.json").isFile();
-                File[] w = work.listFiles();
-                if (w != null) for (File f : w) { String n = f.getName();
+                List<File> w = new ArrayList<>();
+                for (File d : new File[] { work, scratchDir(this, game) }) { File[] k = d.listFiles(); if (k != null) w.addAll(Arrays.asList(k)); }
+                for (File f : w) { String n = f.getName();
                     boolean drop = n.equals("extract") || n.equals("shader_pkg") || n.equals("cas") || n.equals("aoc") || n.startsWith("dmsh_")
-                        || (!keepXlate && (n.equals("vk") || n.equals("shader_cache")));
+                        || n.equals("shaders.raw.pak") || n.equals("shaders.new.pak") || (!keepXlate && (n.equals("vk") || n.equals("shader_cache")));
                     if (drop && !running) { freed += treeSize(f); deleteTree(f); } }
                 // what v0.69-v0.76's fast setup left for its background part (rest.json, rest/): nothing reads it any more, and a full Set up translates those shaders
                 for (String n : new String[] { "rest.json", "rest", "game_running" }) { File f = new File(game, n); if (f.exists() && !running) { freed += treeSize(f); deleteTree(f); } }
@@ -843,6 +847,7 @@ public final class SetupActivity extends Activity {
                 cmd.add(lib + "/libpython_exe.so"); cmd.add(new File(dm, "android/tools/setup_game.py").getPath());
                 cmd.addAll(args);
                 cmd.add("--out"); cmd.add(gameDir().getPath()); cmd.add("--work"); cmd.add(work.getPath()); cmd.add("--bin"); cmd.add(bin.getPath());
+                cmd.add("--scratch"); cmd.add(scratchDir(this, gameDir()).getPath());
                 File ext = new File(dm, "android/app/assets/nintendo_ext.ttf"); if (ext.exists() && !args.contains("--captures")) { cmd.add("--ext-font"); cmd.add(ext.getPath()); }
                 if (!args.contains("--captures")) {   // the dump says which game it is: setup puts it in that game's place (GAME line below), one of each game
                     StringBuilder ids = new StringBuilder(); for (String[] g : GameSettings.games(this)) ids.append(ids.length() > 0 ? "," : "").append(g[0]);
@@ -904,7 +909,7 @@ public final class SetupActivity extends Activity {
         File script = new File(dm, "android/tools/setup_game.py"); if (!script.isFile() || !new File(bin, "dmsh_xlate").exists()) return null;
         work.mkdirs();
         List<String> cmd = new ArrayList<>(Arrays.asList(c.getApplicationInfo().nativeLibraryDir + "/libpython_exe.so", script.getPath())); cmd.addAll(args);
-        cmd.addAll(Arrays.asList("--out", game.getPath(), "--work", work.getPath(), "--bin", bin.getPath()));
+        cmd.addAll(Arrays.asList("--out", game.getPath(), "--work", work.getPath(), "--bin", bin.getPath(), "--scratch", scratchDir(c, game).getPath()));
         ProcessBuilder pb = new ProcessBuilder(cmd).redirectErrorStream(true); toolEnv(c, pb, py, dm, bin, workers);
         return pb.start();
     }
