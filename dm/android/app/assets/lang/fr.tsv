@@ -379,3 +379,6 @@ Setting up	Installation
 Keep the phone cooler: half the workers (setup takes longer)	Garder le téléphone plus frais : moitié moins de processus (l'installation est plus longue)
 Updating the shaders for this app version: your files aren't needed and your save is kept.	Mise à jour des shaders pour cette version de l'app : tes fichiers ne sont pas nécessaires et ta sauvegarde est conservée.
 Updating the shaders	Mise à jour des shaders
+3D render scale	Échelle du rendu 3D
+Auto: what the Graphics setting gives, lowered by itself when the phone is hot	Auto : ce que donne le réglage Graphismes, abaissé tout seul quand le téléphone chauffe
+50 %: the 3D at half size, the coolest and fastest (text and menus stay sharp)	50 % : la 3D à moitié de sa taille, le plus frais et le plus rapide (le texte et les menus restent nets)

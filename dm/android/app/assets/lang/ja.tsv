@@ -379,3 +379,6 @@ Setting up	セットアップ
 Keep the phone cooler: half the workers (setup takes longer)	端末を熱くしにくくする：ワーカーを半分にします（セットアップに時間がかかります）
 Updating the shaders for this app version: your files aren't needed and your save is kept.	このアプリのバージョン用にシェーダーを更新しています：ファイルは不要で、セーブデータはそのままです。
 Updating the shaders	シェーダーを更新中
+3D render scale	3D描画スケール
+Auto: what the Graphics setting gives, lowered by itself when the phone is hot	自動：グラフィック設定に従い、端末が熱いと自動で下げます
+50 %: the 3D at half size, the coolest and fastest (text and menus stay sharp)	50%：3Dを半分のサイズで描画。最も涼しく速い（文字とメニューは鮮明なまま）
