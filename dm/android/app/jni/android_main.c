@@ -537,8 +537,11 @@ static void device_profile(void) {
             *maker ? maker : "?", *model ? model : "unknown", force ? ", DM_PROFILE" : "", gb, g ? g : "default", an ? an : "default", tq ? tq : "full");
 }
 static pid_t g_game_tid;   // the game's main thread (performance hints below)
+static void pin_update(void);
 static void *host_thread(void *a) {
     g_game_tid = gettid();
+    setpriority(PRIO_PROCESS, (id_t)gettid(), -12);
+    pin_update();
     (void)a; static char alt[65536]; stack_t ss = {.ss_sp = alt, .ss_size = sizeof alt}; sigaltstack(&ss, 0);
     char patched[1100]; snprintf(patched, sizeof patched, "%s/patched", g_game);
     char *argv[3] = { "dmhost", patched, NULL };
@@ -937,28 +940,62 @@ static void host_start(void) {
 // its two fastest cores idle at 1 GHz (pinned, the replay's CPU cost fell from 21 to 14 ms a frame). "Fastest" is each core's clock limit right now, looked at again every 5 s
 // (log_mirror): a hot phone can cap its prime cores below the others (1.69 GHz seen against 2.9), and then the threads move. A phone whose cores are all alike is left alone.
 // DM_CPU_PIN=off leaves the scheduler to it
-static pid_t g_pin_tid[3]; static int g_pin_n; static long g_pin_top;
+static pid_t g_pres_tid;
 static void pin_update(void) {
-    const char *e = getenv("DM_CPU_PIN"); if ((e && !strcmp(e, "off")) || !g_pin_n) return;
-    long top = 0, low = 0, f[32]; cpu_set_t set; CPU_ZERO(&set); int n = 0;
-    for (int c = 0; c < 32; c++) { char p[96]; snprintf(p, sizeof p, "/sys/devices/system/cpu/cpu%d/cpufreq/scaling_max_freq", c); FILE *fp = fopen(p, "r"); f[c] = 0;
-        if (fp) { if (fscanf(fp, "%ld", &f[c]) != 1) f[c] = 0; fclose(fp); } if (f[c] > top) top = f[c]; if (f[c] && (!low || f[c] < low)) low = f[c]; }
+    const char *e = getenv("DM_CPU_PIN"); if (e && !strcmp(e, "off")) return;
+    extern int nvn_rq_tid(void) __attribute__((weak));
+    int rq_tid = nvn_rq_tid ? nvn_rq_tid() : 0;
+    pid_t game_tid = g_game_tid;
+    pid_t pres_tid = g_pres_tid;
+
+    long top = 0, low = 0, f[32];
+    for (int c = 0; c < 32; c++) {
+        char p[96]; snprintf(p, sizeof p, "/sys/devices/system/cpu/cpu%d/cpufreq/scaling_max_freq", c);
+        FILE *fp = fopen(p, "r"); f[c] = 0;
+        if (fp) { if (fscanf(fp, "%ld", &f[c]) != 1) f[c] = 0; fclose(fp); }
+        if (f[c] > top) top = f[c];
+        if (f[c] && (!low || f[c] < low)) low = f[c];
+    }
     if (!top) return;
-    if (top == low) { if (!g_pin_top) return; for (int c = 0; c < 32; c++) if (f[c]) { CPU_SET(c, &set); n++; } }   // all alike now: every core
-    else for (int c = 0; c < 32; c++) if (f[c] == top) { CPU_SET(c, &set); n++; }
-    // never fewer cores than pinned threads: a hot Galaxy Z Flip5 capped its prime core to 1.71 GHz with the middle ones at 1.56, and both threads a frame waits on
-    //   shared that one core (41-48 ms of CPU work a frame) while three nearly as fast cores sat idle. The next fastest cores join until each thread has one
-    long floor_ = top;
-    while (n < g_pin_n && top != low) {
-        long next = 0; for (int c = 0; c < 32; c++) if (f[c] && f[c] < floor_ && f[c] > next) next = f[c];
-        if (!next) break;
-        for (int c = 0; c < 32; c++) if (f[c] == next) { CPU_SET(c, &set); n++; }
-        floor_ = next; }
-    if (top == g_pin_top && !(top == low)) { static cpu_set_t last; if (CPU_EQUAL(&last, &set)) return; last = set; }
-    g_pin_top = top;
-    for (int i = 0; i < g_pin_n; i++) sched_setaffinity(g_pin_tid[i], sizeof set, &set);
-    if (floor_ < top) fprintf(stderr, "[cpu] main threads on %d cores limited to %.2f-%.2f GHz (the fastest alone was fewer cores than threads)\n", n, floor_ / 1e6, top / 1e6);
-    else fprintf(stderr, "[cpu] main threads on %d core%s limited to %.2f GHz\n", n, n == 1 ? "" : "s", top / 1e6);
+
+    cpu_set_t set_top, set_all; CPU_ZERO(&set_top); CPU_ZERO(&set_all);
+    int n_top = 0, n_all = 0;
+    for (int c = 0; c < 32; c++) {
+        if (f[c]) { CPU_SET(c, &set_all); n_all++; }
+        if (f[c] == top) { CPU_SET(c, &set_top); n_top++; }
+    }
+
+    if (top == low) {
+        set_top = set_all;
+        n_top = n_all;
+    } else if (n_top == 1) {
+        long next = 0;
+        for (int c = 0; c < 32; c++) if (f[c] && f[c] < top && f[c] > next) next = f[c];
+        if (next && next > low) {
+            for (int c = 0; c < 32; c++) if (f[c] == next) { CPU_SET(c, &set_top); n_top++; }
+        }
+    }
+
+    static cpu_set_t last_top;
+    if (!CPU_EQUAL(&last_top, &set_top)) {
+        last_top = set_top;
+        fprintf(stderr, "[cpu] pinning heavy threads to %d performance core%s (freq %.2f GHz)\n",
+                n_top, n_top == 1 ? "" : "s", top / 1e6);
+    }
+
+    if (game_tid) {
+        sched_setaffinity(game_tid, sizeof set_top, &set_top);
+        setpriority(PRIO_PROCESS, (id_t)game_tid, -12);
+    }
+    if (rq_tid && rq_tid != game_tid) {
+        sched_setaffinity(rq_tid, sizeof set_top, &set_top);
+        setpriority(PRIO_PROCESS, (id_t)rq_tid, -10);
+    }
+    if (pres_tid && pres_tid != game_tid && pres_tid != rq_tid) {
+        if (n_top > 2) sched_setaffinity(pres_tid, sizeof set_top, &set_top);
+        else sched_setaffinity(pres_tid, sizeof set_all, &set_all);
+        setpriority(PRIO_PROCESS, (id_t)pres_tid, -8);
+    }
 }
 // ---------- Performance hints (Android 13+): one session for the game's main thread and the presenting thread, told every frame how long the presenting thread
 // worked against the frame's period (nvn_vk.c mtl_present). That is what brings the fastest cores and higher clocks when the game needs them, and lower ones
@@ -993,11 +1030,13 @@ static int64_t hint_target(uint64_t period_ns) {
 static void *(*p_hint_mgr)(void); static void *(*p_hint_create)(void *, const int32_t *, size_t, int64_t);
 static int (*p_hint_target)(void *, int64_t); static int (*p_hint_report)(void *, int64_t);
 void front_frame_work(uint64_t busy_ns, uint64_t period_ns) {
+    g_pres_tid = gettid();
+    pin_update();
     if (g_hint_failed) return;
     uint64_t target_ns = (uint64_t)hint_target(period_ns);
     if (!g_hint) {
         static int tried; if (tried++) return;
-        setpriority(PRIO_PROCESS, (id_t)gettid(), -10);
+        setpriority(PRIO_PROCESS, (id_t)gettid(), -8);
         void *lib = dlopen("libandroid.so", RTLD_NOW); if (!lib) { g_hint_failed = 1; return; }
         p_hint_mgr = (void *(*)(void))dlsym(lib, "APerformanceHint_getManager");
         p_hint_create = (void *(*)(void *, const int32_t *, size_t, int64_t))dlsym(lib, "APerformanceHint_createSession");
@@ -1019,8 +1058,8 @@ void front_frame_work(uint64_t busy_ns, uint64_t period_ns) {
         g_hint = m && p_hint_create ? p_hint_create(m, t, n, (int64_t)target_ns) : NULL;
         if (!g_hint && n > pinned && m && p_hint_create) g_hint = p_hint_create(m, t, n = pinned, (int64_t)target_ns);   // (refused with the workers: the two threads as before)
         if (!g_hint || !p_hint_report) { g_hint_failed = 1; fprintf(stderr, "[cpu] no performance hint session\n"); return; }
-        g_hint_target = (int64_t)target_ns; for (size_t i = 0; i < pinned; i++) g_pin_tid[i] = t[i]; g_pin_n = (int)pinned; pin_update();
-        fprintf(stderr, "[cpu] performance hint session: %zu threads (%zu of them the game's frame workers), target %.1f ms of the %.1f ms frame; presenting thread at priority -10\n", n, n - pinned, target_ns / 1e6, period_ns / 1e6);
+        g_hint_target = (int64_t)target_ns;
+        fprintf(stderr, "[cpu] performance hint session: %zu threads (%zu of them the game's frame workers), target %.1f ms of the %.1f ms frame; presenting thread at priority -8\n", n, n - pinned, target_ns / 1e6, period_ns / 1e6);
     }
     if ((int64_t)target_ns != g_hint_target && p_hint_target) p_hint_target(g_hint, g_hint_target = (int64_t)target_ns);
     if (busy_ns) p_hint_report(g_hint, (int64_t)busy_ns);

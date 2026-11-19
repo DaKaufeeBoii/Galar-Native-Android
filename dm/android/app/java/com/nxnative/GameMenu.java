@@ -325,7 +325,7 @@ public final class GameMenu {
             { "0.40", "40 %", t(a, "40 %: low-end chip performance mode, coolest and fastest") },
             { "0.35", "35 %", t(a, "35 %: maximum performance for budget chips") } });
         choice(a, "DM_VK_SPLIT", t(a, "Draw submission splitting"), new String[][] {
-            { "", t(a, "Auto"), t(a, "Auto: default for this game (Off for Sword/Shield)") },
+            { "", t(a, "Auto"), t(a, "Auto: default (150 draws: hands work to GPU earlier)") },
             { "0", t(a, "Off"), t(a, "Off: all draws in one submission") },
             { "150", t(a, "150 draws"), t(a, "150 draws: hands work to GPU earlier, overlaps CPU and GPU") },
             { "100", t(a, "100 draws"), t(a, "100 draws: aggressive GPU concurrency for budget chips") } });

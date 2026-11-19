@@ -5496,7 +5496,9 @@ uint64_t mtl_present(const tex_t *t, double period_s, const int crop[4]) {
       if (of && (long)n == of && op) { vtex *x = tex_res(t); if (x && x->img) ovl_shot(x, crop, op); } }
 #endif
     uint64_t now = mono_ns(), due = g_last_present + (uint64_t)(period_s * 1e9);
+#ifndef __ANDROID__
     if (period_s > 0 && due > now) { struct timespec ts = { (time_t)((due - now) / 1000000000ull), (long)((due - now) % 1000000000ull) }; nanosleep(&ts, NULL); now = due; }
+#endif
     g_last_present = now; g_present_exit = mono_ns();
     if (n % 900 == 0 && atomic_load(&g_pso_new) >= 10) { static atomic_int busy; if (!atomic_exchange(&busy, 1)) {   // new pipelines: the cache file is rewritten in the background
         pthread_t t; void *saver(void *a); if (pthread_create(&t, NULL, saver, &busy)) atomic_store(&busy, 0); else pthread_detach(t); } }

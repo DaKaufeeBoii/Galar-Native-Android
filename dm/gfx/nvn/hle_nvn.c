@@ -1091,7 +1091,7 @@ static void *rq_main(void *a) {
     (void)a;
 #if defined(__ANDROID__)
     atomic_store(&g_rq_tid, (int)gettid());
-    setpriority(PRIO_PROCESS, (id_t)gettid(), -8);
+    setpriority(PRIO_PROCESS, (id_t)gettid(), -10);
 #endif
     for (;;) {
         pthread_mutex_lock(&g_rq_mu);

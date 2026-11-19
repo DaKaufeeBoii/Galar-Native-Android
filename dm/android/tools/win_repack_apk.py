@@ -4,7 +4,7 @@ import subprocess
 import zipfile
 import shutil
 
-ROOT_DIR = os.path.abspath(os.path.dirname(__file__))
+ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 ANDROID_SDK = r"C:\Users\user\AppData\Local\Android\Sdk"
 BUILD_TOOLS = os.path.join(ANDROID_SDK, "build-tools", "35.0.0")
 ANDROID_JAR = os.path.join(ANDROID_SDK, "platforms", "android-35", "android.jar")
