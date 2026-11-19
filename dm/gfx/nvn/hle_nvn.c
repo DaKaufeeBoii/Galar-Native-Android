@@ -575,9 +575,11 @@ NVN(nvnSyncWait, NVNsyncWaitResult, const NVNsync *s, uint64_t timeout) {
     return r;
 }
 static NVNsyncWaitResult sync_wait_(const sync_t *o, uint64_t timeout) {
-    if (timeout) rq_drain();   // (a wait with a timeout: what is queued comes first. A poll just reads: not fenced yet is not signalled)
     if (!o->fenced) return NVN_SYNC_WAIT_RESULT_TIMEOUT_EXPIRED;
-    if (mtl_wait(o->fence, 0)) return NVN_SYNC_WAIT_RESULT_ALREADY_SIGNALED;
+    if (o->fence == 0) return NVN_SYNC_WAIT_RESULT_ALREADY_SIGNALED;
+    if (o->fence != UINT64_MAX && mtl_wait(o->fence, 0)) return NVN_SYNC_WAIT_RESULT_ALREADY_SIGNALED;
+    if (timeout && o->fence == UINT64_MAX) rq_drain();
+    if (o->fence == UINT64_MAX) return NVN_SYNC_WAIT_RESULT_TIMEOUT_EXPIRED;
     return mtl_wait(o->fence, timeout) ? NVN_SYNC_WAIT_RESULT_CONDITION_SATISFIED : NVN_SYNC_WAIT_RESULT_TIMEOUT_EXPIRED;
 }
 NVN(nvnEventBuilderSetDefaults, void, NVNeventBuilder *b) { memset(b, 0, sizeof(ev_builder_t)); }
@@ -1098,7 +1100,7 @@ static void *rq_main(void *a) {
         pthread_mutex_unlock(&g_rq_mu);
         if (it.kind == RQ_SUBMIT) { g_rq_at = "submit"; sub_run(it.q, it.n, (const NVNcommandHandle *)it.h); free(it.h); }
         else if (it.kind == RQ_FENCE) { g_rq_at = "fence"; it.s->fence = mtl_last_fence(); }
-        else { g_rq_at = "present"; gfx_enter(); uint64_t t = mtl_present(CTX(it.o->tex[it.idx]), it.period, it.crop); it.o->ticket[it.idx] = t; gfx_leave(); }
+        else { g_rq_at = "present"; gfx_enter(); uint64_t t = mtl_present(CTX(it.o->tex[it.idx]), it.period, it.crop); it.o->ticket[it.idx] = t; __atomic_store_n(&it.o->pfence[it.idx], mtl_last_fence(), __ATOMIC_RELEASE); gfx_leave(); }
         g_rq_at = "idle";
         pthread_mutex_lock(&g_rq_mu);
         g_rq_tail++; if (it.kind == RQ_PRESENT) g_rq_presents--;
@@ -1279,7 +1281,9 @@ NVN(nvnWindowAcquireTexture, NVNwindowAcquireTextureResult, NVNwindow *w, NVNsyn
     //   draws the last one, as on the console. Fenced with everything submitted so far, the game waited on its sync for the whole of the frame it had just submitted
     //   (Violet on a Galaxy S25+: 24.6 ms of each 43 ms frame, CPU and GPU taking turns). DM_NVN_ACQUIRE_FENCE=all: the old fence
     { static int all = -1; if (all < 0) { const char *e = getenv("DM_NVN_ACQUIRE_FENCE"); all = e && !strcmp(e, "all"); }
-      if (s && !all && !rq_on() && *idx < 4 && o->pfence[*idx]) { ((sync_t *)s)->fenced = 1; ((sync_t *)s)->fence = o->pfence[*idx]; }
+      uint64_t pf = *idx < 4 ? __atomic_load_n(&o->pfence[*idx], __ATOMIC_ACQUIRE) : 0;
+      if (s && !all && *idx < 4 && pf) { ((sync_t *)s)->fenced = 1; ((sync_t *)s)->fence = pf; }
+      else if (s && !all && *idx < 4 && !pf) { ((sync_t *)s)->fenced = 1; ((sync_t *)s)->fence = 0; }
       else if (s) sync_fence_now((sync_t *)s); }
     // (the swapchain texture is available once the work fenced above is done; an `if (0)` left here made the frame-start line below dead code)
     if (!g_fs_start) { g_fs_start = now_ns(); g_fs_wait = pace_ns; }   // the frame starts when the first acquire after a present returns: on a display-link tick when on time
@@ -1662,7 +1666,7 @@ NVN(nvnQueuePresentTexture, void, NVNqueue *q, NVNwindow *w, int idx) {
           atomic_store(&g_nvn_game_work_avg_ns, a ? a + (uint64_t)(((int64_t)w - (int64_t)a) / 16) : w); } }   // (the average over about 16 frames: the fps guard's CPU test)
     if (idx >= 0 && idx < o->ntex && idx < 4) {
         if (rq_on()) { rq_item it = { .kind = RQ_PRESENT, .o = o, .idx = idx, .period = present_period(o) / 1e9 }; memcpy(it.crop, o->crop, sizeof it.crop); gfx_leave(); rq_push(it); gfx_enter(); }
-        else { o->ticket[idx] = mtl_present(CTX(o->tex[idx]), present_period(o) / 1e9, o->crop); o->pfence[idx] = mtl_last_fence(); }   // enqueue only, return immediately
+        else { o->ticket[idx] = mtl_present(CTX(o->tex[idx]), present_period(o) / 1e9, o->crop); __atomic_store_n(&o->pfence[idx], mtl_last_fence(), __ATOMIC_RELEASE); }   // enqueue only, return immediately
     }
     gfx_leave();
     atomic_fetch_add(&g_nvn_ns, now_ns() - t0);

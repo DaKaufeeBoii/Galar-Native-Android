@@ -322,7 +322,13 @@ public final class GameMenu {
             { "0.90", "90 %", "" }, { "0.80", "80 %", "" }, { "0.75", "75 %", "" }, { "0.66", "66 %", "" },
             { "0.50", "50 %", t(a, "50 %: the 3D at half size (text and menus stay sharp)") },
             { "0.45", "45 %", "" },
-            { "0.40", "40 %", t(a, "40 %: low-end chip performance mode, coolest and fastest") } });
+            { "0.40", "40 %", t(a, "40 %: low-end chip performance mode, coolest and fastest") },
+            { "0.35", "35 %", t(a, "35 %: maximum performance for budget chips") } });
+        choice(a, "DM_VK_SPLIT", t(a, "Draw submission splitting"), new String[][] {
+            { "", t(a, "Auto"), t(a, "Auto: default for this game (Off for Sword/Shield)") },
+            { "0", t(a, "Off"), t(a, "Off: all draws in one submission") },
+            { "150", t(a, "150 draws"), t(a, "150 draws: hands work to GPU earlier, overlaps CPU and GPU") },
+            { "100", t(a, "100 draws"), t(a, "100 draws: aggressive GPU concurrency for budget chips") } });
         if (GameSettings.has60(a)) choice(a, "DM_FPS_TARGET", t(a, "Frame rate"), new String[][] { { "", t(a, "Auto"), t(a, "Auto: this phone gets %s fps", p[5]) },
             { "30", "30 fps", t(a, "30 fps, as the game is made") }, { "60", "60 fps", GameSettings.paldea(a) ? t(a, "Up to 60 fps: faster where the phone can, game speed stays right (Fl4sh's Dynamic FPS mod)")
                                                                                                : t(a, "60 fps: smoother; drops to 720p when needed to hold 60 (with Graphics on Auto or Adaptive)") } });

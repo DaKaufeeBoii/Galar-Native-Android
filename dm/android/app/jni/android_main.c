@@ -665,7 +665,7 @@ void dm_set_opmode(int m);   // host/hle_oe.c: tells the game the console mode c
 // A scene that keeps the game's full size (the menus showing Pokémon models: the game's own mode, hle_resscale.c) is drawn at full size whatever the step: no step is
 //   taken or judged there. A step on trial when one opens is kept without a verdict, and the short-frame count starts again
 int dm_res_scale_ready(void), dm_res_scale_applies(void); void dm_res_factor_set(float f);   // host/hle_resscale.c
-static const float k_res_steps[] = { 1.0f, 0.85f, 0.667f, 0.6f, 0.5f, 0.45f, 0.4f };   // (0.667: 720p from 1080p, down to 0.4 for budget GPUs)
+static const float k_res_steps[] = { 1.0f, 0.85f, 0.667f, 0.6f, 0.5f, 0.45f, 0.4f, 0.35f };   // (0.667: 720p from 1080p, down to 0.35 for budget GPUs)
 #define NRES ((int)(sizeof k_res_steps / sizeof k_res_steps[0]))
 #define RES_HOT 2   // the step heat goes straight to: 720p from 1080p (the upscaler brings it back to the screen's size)
 #define RES_START 1   // where Auto starts: 85 % (between 720p and 1080p), up to the game's full size after a calm minute at a steady 30, down to 720p when short (DM_RES_START=0..3 picks another step)
