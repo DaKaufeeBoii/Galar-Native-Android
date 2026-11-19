@@ -233,7 +233,7 @@ JNIEXPORT jboolean JNICALL Java_com_nxnative_GameMenu_nativeSetting(JNIEnv *env,
     //   (Lowest 0.50, Low 0.55, else none) and the heat guard steps it; a percentage is held, and the guard leaves it alone (graphics_auto: DM_RES_CAP set)
     else if (!strcmp(k, "DM_RES_CAP")) { extern void dm_res_cap_set(float) __attribute__((weak)); extern int dm_res_scale_ready(void);
         float c = v ? (float)atof(v) : 0; const char *g = getenv("DM_GRAPHICS");
-        if (c >= 0.5f && c <= 1.0f) setenv("DM_RES_CAP", v, 1); else { unsetenv("DM_RES_CAP"); c = g && !strcmp(g, "lowest") ? 0.50f : g && !strcmp(g, "low") ? 0.55f : 1.0f; }
+        if (c >= 0.35f && c <= 1.0f) setenv("DM_RES_CAP", v, 1); else { unsetenv("DM_RES_CAP"); c = g && !strcmp(g, "lowest") ? 0.50f : g && !strcmp(g, "low") ? 0.55f : 1.0f; }
         if (&dm_res_cap_set && dm_res_scale_ready()) { dm_res_cap_set(c); fprintf(stderr, "3D render scale: %.0f %% (%s), set while playing\n", c * 100, v ? "chosen" : "Auto"); } else now = 0; }
     else if (!strcmp(k, "DM_RSTICK_SENS")) { extern _Atomic int dm_rstick_pct __attribute__((weak)); int p = v ? atoi(v) : 100; if (p < 25 || p > 400) p = 100; if (&dm_rstick_pct) atomic_store(&dm_rstick_pct, p); else now = 0; }   // (the touch click follows it at once; the game's motors are GameActivity's, GameMenu decides)
     else if (!strcmp(k, "DM_ASPECT")) __atomic_store_n(&dm_aspect_mode, !v ? DM_ASPECT_FIT : !strcmp(v, "20:9") ? DM_ASPECT_20_9 : !strcmp(v, "fill") || !strcmp(v, "wide") ? DM_ASPECT_FILL : DM_ASPECT_FIT, __ATOMIC_RELAXED);
@@ -665,7 +665,7 @@ void dm_set_opmode(int m);   // host/hle_oe.c: tells the game the console mode c
 // A scene that keeps the game's full size (the menus showing Pokémon models: the game's own mode, hle_resscale.c) is drawn at full size whatever the step: no step is
 //   taken or judged there. A step on trial when one opens is kept without a verdict, and the short-frame count starts again
 int dm_res_scale_ready(void), dm_res_scale_applies(void); void dm_res_factor_set(float f);   // host/hle_resscale.c
-static const float k_res_steps[] = { 1.0f, 0.85f, 0.667f, 0.6f };   // (0.667: 720p from 1080p)
+static const float k_res_steps[] = { 1.0f, 0.85f, 0.667f, 0.6f, 0.5f, 0.45f, 0.4f };   // (0.667: 720p from 1080p, down to 0.4 for budget GPUs)
 #define NRES ((int)(sizeof k_res_steps / sizeof k_res_steps[0]))
 #define RES_HOT 2   // the step heat goes straight to: 720p from 1080p (the upscaler brings it back to the screen's size)
 #define RES_START 1   // where Auto starts: 85 % (between 720p and 1080p), up to the game's full size after a calm minute at a steady 30, down to 720p when short (DM_RES_START=0..3 picks another step)
@@ -937,7 +937,7 @@ static void host_start(void) {
 // its two fastest cores idle at 1 GHz (pinned, the replay's CPU cost fell from 21 to 14 ms a frame). "Fastest" is each core's clock limit right now, looked at again every 5 s
 // (log_mirror): a hot phone can cap its prime cores below the others (1.69 GHz seen against 2.9), and then the threads move. A phone whose cores are all alike is left alone.
 // DM_CPU_PIN=off leaves the scheduler to it
-static pid_t g_pin_tid[2]; static int g_pin_n; static long g_pin_top;
+static pid_t g_pin_tid[3]; static int g_pin_n; static long g_pin_top;
 static void pin_update(void) {
     const char *e = getenv("DM_CPU_PIN"); if ((e && !strcmp(e, "off")) || !g_pin_n) return;
     long top = 0, low = 0, f[32]; cpu_set_t set; CPU_ZERO(&set); int n = 0;
@@ -1004,10 +1004,18 @@ void front_frame_work(uint64_t busy_ns, uint64_t period_ns) {
         p_hint_target = (int (*)(void *, int64_t))dlsym(lib, "APerformanceHint_updateTargetWorkDuration");
         p_hint_report = (int (*)(void *, int64_t))dlsym(lib, "APerformanceHint_reportActualWorkDuration");
         void *m = p_hint_mgr ? p_hint_mgr() : NULL;
-        int32_t t[2 + 8]; size_t n = 0; t[n++] = gettid(); if (g_game_tid && g_game_tid != gettid()) t[n++] = g_game_tid;
-        size_t pinned = n;   // (only these two are pinned to the top cores: the workers below share the frame's work and would crowd them)
+        extern int nvn_rq_tid(void) __attribute__((weak));
+        int rq_tid = nvn_rq_tid ? nvn_rq_tid() : 0;
+        int32_t t[3 + 8]; size_t n = 0; t[n++] = gettid();
+        if (g_game_tid && g_game_tid != gettid()) t[n++] = g_game_tid;
+        if (rq_tid && rq_tid != gettid() && rq_tid != g_game_tid) t[n++] = rq_tid;
+        size_t pinned = n;   // (pinned to the top cores: presenter, game thread, and replay worker)
         { extern int thr_frame_tids(int *out, int max) __attribute__((weak)); int w[8]; int k = thr_frame_tids ? thr_frame_tids(w, 8) : 0;
-          for (int i = 0; i < k; i++) if (w[i] != t[0] && (pinned < 2 || w[i] != t[1])) t[n++] = w[i]; }
+          for (int i = 0; i < k; i++) {
+              int already = 0;
+              for (size_t j = 0; j < pinned; j++) if (w[i] == t[j]) { already = 1; break; }
+              if (!already) t[n++] = w[i];
+          } }
         g_hint = m && p_hint_create ? p_hint_create(m, t, n, (int64_t)target_ns) : NULL;
         if (!g_hint && n > pinned && m && p_hint_create) g_hint = p_hint_create(m, t, n = pinned, (int64_t)target_ns);   // (refused with the workers: the two threads as before)
         if (!g_hint || !p_hint_report) { g_hint_failed = 1; fprintf(stderr, "[cpu] no performance hint session\n"); return; }

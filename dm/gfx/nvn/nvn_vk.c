@@ -3233,7 +3233,12 @@ static VkPipeline pso_lookup_s(vprog *pr, const pkey *k, const sst *ss, int reco
 // Balance: three workers, and each frame may wait up to 8 ms in all (DM_VK_ASYNC_WAIT_MS) for pipelines being built before it skips their draws, so most come in on
 //   their first frame (a short hitch at most) instead of objects missing for seconds while one worker went through a new scene's list (6,336 draws skipped, S25+)
 #define APSO_N 256
-#define APSO_WORKERS 3
+static int apso_worker_count(void) {
+    const char *w = getenv("DM_VK_APSO_WORKERS");
+    if (w && *w) { int n = atoi(w); return n > 0 && n <= 4 ? n : 2; }
+    long ncpu = sysconf(_SC_NPROCESSORS_ONLN);
+    return ncpu <= 8 ? 2 : 3;
+}
 static pthread_cond_t g_apso_dcv = PTHREAD_COND_INITIALIZER; static _Atomic int64_t g_apso_budget_ns = 8000000; static int64_t g_apso_frame_ns = 8000000;
 static struct { vprog *pr; pkey k; } g_apso[APSO_N]; static int g_apso_h, g_apso_n; static pthread_mutex_t g_apso_mu = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t g_apso_cv = PTHREAD_COND_INITIALIZER; static nvn_hmap g_pso_pend = {.klen = sizeof(pkey)}; static _Atomic uint64_t g_apso_done, g_apso_skipped;
@@ -3253,7 +3258,7 @@ static int apso_on(void) {
     static int v = -1;
     if (v < 0) { const char *e = getenv("DM_VK_ASYNC_PSO"); v = e ? atoi(e) != 0 : g_props.vendorID == 0x5143;   // (on by default on Adreno, Qualcomm 0x5143; Mali and the rest as before)
    
-        if (v) { int nw = 0; for (int i = 0; i < APSO_WORKERS; i++) { pthread_t t; if (!pthread_create(&t, NULL, apso_main, NULL)) { pthread_detach(t); nw++; } }
+        if (v) { int nw = 0, want_w = apso_worker_count(); for (int i = 0; i < want_w; i++) { pthread_t t; if (!pthread_create(&t, NULL, apso_main, NULL)) { pthread_detach(t); nw++; } }
             const char *w = getenv("DM_VK_ASYNC_WAIT_MS"); if (w && *w) { int ms = atoi(w); if (ms < 0) ms = 0; if (ms > 33) ms = 33; g_apso_frame_ns = ms * 1000000LL; g_apso_budget_ns = g_apso_frame_ns; }
             if (!nw) v = 0; else VLOG("pipelines the lists did not have: built in the background by %d workers; a frame waits up to %lld ms for them, then their draws are skipped until done (DM_VK_ASYNC_PSO)", nw, (long long)(g_apso_frame_ns / 1000000)); } }
     return v;

@@ -320,7 +320,9 @@ public final class GameMenu {
         if (!GameSettings.paldea(a)) choice(a, "DM_RES_CAP", t(a, "3D render scale"), new String[][] {
             { "", t(a, "Auto"), t(a, "Auto: what the Graphics setting gives, lowered by itself when the phone is hot") },
             { "0.90", "90 %", "" }, { "0.80", "80 %", "" }, { "0.75", "75 %", "" }, { "0.66", "66 %", "" },
-            { "0.50", "50 %", t(a, "50 %: the 3D at half size, the coolest and fastest (text and menus stay sharp)") } });
+            { "0.50", "50 %", t(a, "50 %: the 3D at half size (text and menus stay sharp)") },
+            { "0.45", "45 %", "" },
+            { "0.40", "40 %", t(a, "40 %: low-end chip performance mode, coolest and fastest") } });
         if (GameSettings.has60(a)) choice(a, "DM_FPS_TARGET", t(a, "Frame rate"), new String[][] { { "", t(a, "Auto"), t(a, "Auto: this phone gets %s fps", p[5]) },
             { "30", "30 fps", t(a, "30 fps, as the game is made") }, { "60", "60 fps", GameSettings.paldea(a) ? t(a, "Up to 60 fps: faster where the phone can, game speed stays right (Fl4sh's Dynamic FPS mod)")
                                                                                                : t(a, "60 fps: smoother; drops to 720p when needed to hold 60 (with Graphics on Auto or Adaptive)") } });

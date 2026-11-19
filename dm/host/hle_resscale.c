@@ -42,7 +42,7 @@ static uint8_t *g_base;
 
 static float cap_now(void) {
     uint32_t b = g_cap_bits; float c;
-    if (!b) { const char *e = getenv("DM_RES_CAP"); c = e ? (float)atof(e) : 1.0f; if (!(c >= 0.5f && c <= 1.0f)) { if (e) LOG("[RED] DM_RES_CAP=%s: must be 0.5 - 1; no cap", e); c = 1.0f; }
+    if (!b) { const char *e = getenv("DM_RES_CAP"); c = e ? (float)atof(e) : 1.0f; if (!(c >= 0.35f && c <= 1.0f)) { if (e) LOG("[RED] DM_RES_CAP=%s: must be 0.35 - 1; no cap", e); c = 1.0f; }
               memcpy(&b, &c, sizeof b); g_cap_bits = b; }
     memcpy(&c, &b, sizeof c); return c;
 }
@@ -61,14 +61,14 @@ static int row(void) {
 // game's graphics object exists applies once it does
 int dm_res_scale_ready(void) { return row() >= 0; }
 void dm_res_cap_set(float c) {
-    if (!(c >= 0.5f && c <= 1.0f)) return;
+    if (!(c >= 0.35f && c <= 1.0f)) return;
     float old = cap_now(); uint32_t b; memcpy(&b, &c, sizeof b); g_cap_bits = b;
     if (old != c) LOG("render scale cap %.2f → %.2f", old, c);
 }
 float dm_res_cap_get(void) { return cap_now(); }
-// The frame-rate and heat guard (android_main.c graphics_auto): draw at this factor of what the game asks (0.5 - 1), still under the cap
+// The frame-rate and heat guard (android_main.c graphics_auto): draw at this factor of what the game asks (0.35 - 1), still under the cap
 void dm_res_factor_set(float f) {
-    if (!(f >= 0.5f && f <= 1.0f)) return;
+    if (!(f >= 0.35f && f <= 1.0f)) return;
     uint32_t b; memcpy(&b, &f, sizeof b); uint32_t old = atomic_exchange(&g_factor_bits, b); float o; memcpy(&o, &old, sizeof o);
     if (o != f) LOG("render scale factor %.2f → %.2f", o, f);
 }

@@ -1076,6 +1076,8 @@ static int rq_on(void) { static int v = -1; if (v < 0) { const char *e = getenv(
     v = autoon || (e && *e && strcmp(e, "off") && strcmp(e, "0"));
     LOG("[nvn] the replay %s (DM_NVN_ASYNC %s)", v ? "runs on its own thread" : "runs on the game's thread", e && *e ? e : autoon ? "Auto: on for Adreno" : "Auto: off for this GPU"); } return v; }
 static const char *volatile g_rq_at = "idle";
+static _Atomic int g_rq_tid;
+int nvn_rq_tid(void) { return atomic_load(&g_rq_tid); }
 // A wait on the replay thread that takes this long has gone wrong: said in the log with who is waiting and what the replay thread is doing
 static void rq_wait(const char *who) {
     struct timespec ts; clock_gettime(CLOCK_REALTIME, &ts); ts.tv_sec += 5;
@@ -1085,6 +1087,10 @@ static void rq_wait(const char *who) {
 }
 static void *rq_main(void *a) {
     (void)a;
+#if defined(__ANDROID__)
+    atomic_store(&g_rq_tid, (int)gettid());
+    setpriority(PRIO_PROCESS, (id_t)gettid(), -8);
+#endif
     for (;;) {
         pthread_mutex_lock(&g_rq_mu);
         while (g_rq_tail == g_rq_head) pthread_cond_wait(&g_rq_cv, &g_rq_mu);

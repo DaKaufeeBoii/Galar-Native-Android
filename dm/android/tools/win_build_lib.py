@@ -3,7 +3,15 @@ import glob, os, subprocess, sys
 from concurrent.futures import ThreadPoolExecutor
 
 GAME = sys.argv[1]
-NDK = os.path.expanduser("~/android-ndk/android-ndk-r27c")
+NDK = os.environ.get("ANDROID_NDK_HOME") or os.environ.get("NDK") or os.path.expanduser("~/android-ndk/android-ndk-r27c")
+if not os.path.exists(NDK):
+    for cand in [
+        os.path.expanduser("~/AppData/Local/Android/Sdk/ndk/27.2.12479018"),
+        "C:/Users/user/AppData/Local/Android/Sdk/ndk/27.2.12479018"
+    ]:
+        if os.path.exists(cand):
+            NDK = cand
+            break
 TC = NDK + "/toolchains/llvm/prebuilt/windows-x86_64/bin"
 CC = [TC + "/clang.exe", "--target=aarch64-linux-android33"]
 HOST, GFXD = "../host", "../gfx"
