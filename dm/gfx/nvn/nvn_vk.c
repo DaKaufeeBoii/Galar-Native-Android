@@ -1973,16 +1973,24 @@ static void *pre_main(void *unused) {
     for (;;) {
         pthread_mutex_lock(&g_pre_mu);
         while (g_pre_tail == g_pre_head) pthread_cond_wait(&g_pre_cv, &g_pre_mu);
-        unsigned n = g_pre_head - g_pre_tail;
-        if (n > PRE_BATCH_MAX) n = PRE_BATCH_MAX;
+        unsigned avail = g_pre_head - g_pre_tail;
+        if (avail > PRE_BATCH_MAX) avail = PRE_BATCH_MAX;
+        unsigned n = 0;
+        VkDeviceSize peek_bytes = 0;
         tex_t batch[PRE_BATCH_MAX];
-        for (unsigned i = 0; i < n; i++) batch[i] = g_pre[g_pre_tail++ % PRE_N];
+        while (n < avail) {
+            tex_t *p = &g_pre[(g_pre_tail + n) % PRE_N];
+            if (n > 0 && peek_bytes + p->L.size > 24 * 1024 * 1024) break;
+            batch[n] = *p;
+            peek_bytes += p->L.size;
+            n++;
+        }
+        g_pre_tail += n;
         pthread_mutex_unlock(&g_pre_mu);
 
         typedef struct { vtex *x; tex_t t; VkBuffer sb; vmalloc_t tmp; } pre_item;
         pre_item items[PRE_BATCH_MAX];
         int nitems = 0;
-        VkDeviceSize batch_bytes = 0;
 
         for (unsigned i = 0; i < n; i++) {
             tex_t c = batch[i];
@@ -2002,8 +2010,6 @@ static void *pre_main(void *unused) {
             items[nitems].sb = VK_NULL_HANDLE;
             items[nitems].tmp = (vmalloc_t){0};
             nitems++;
-            batch_bytes += c.L.size;
-            if (batch_bytes >= 24 * 1024 * 1024) break;
         }
 
         if (!nitems) continue;
@@ -3866,7 +3872,7 @@ static void draw_one(const p_draw *dw, const p_draw_idx *di);
 static void draw(const p_draw *dw, const p_draw_idx *di) {
     static int on = -1; if (on < 0) { const char *e = getenv("DM_VK_DUALSRC"); on = !(e && (!strcmp(e, "off") || !strcmp(e, "keep"))); }
     const blend_st b = S.blend[0];
-    int ds = on && !S.rast_discard && (S.color.blend_en & 1) && (b.dst_rgb >= 0x10 && b.dst_rgb <= 0x13 || b.dst_a >= 0x10 && b.dst_a <= 0x13);
+    int ds = on && !S.rast_discard && (S.color.blend_en & 1) && ((b.dst_rgb >= 0x10 && b.dst_rgb <= 0x13) || (b.dst_a >= 0x10 && b.dst_a <= 0x13));
     if (ds && (b.eq_rgb > 1 || b.eq_a > 1 || !ds_src_ok(b.src_rgb) || !ds_src_ok(b.src_a) || ds_dst_map(b.dst_rgb) < 0 || ds_dst_map(b.dst_a) < 0)) {
         RED_ONCE(112, "dual-source blend that two steps cannot replace (rgb %u,%u,%u alpha %u,%u,%u): the first output's instead", (unsigned)b.src_rgb, (unsigned)b.dst_rgb, (unsigned)b.eq_rgb, (unsigned)b.src_a, (unsigned)b.dst_a, (unsigned)b.eq_a);
         ds = 0; }
