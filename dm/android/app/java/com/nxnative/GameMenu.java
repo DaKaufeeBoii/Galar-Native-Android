@@ -325,7 +325,7 @@ public final class GameMenu {
             { "0.40", "40 %", t(a, "40 %: low-end chip performance mode, coolest and fastest") },
             { "0.35", "35 %", t(a, "35 %: maximum performance for budget chips") } });
         choice(a, "DM_VK_SPLIT", t(a, "Draw submission splitting"), new String[][] {
-            { "", t(a, "Auto"), t(a, "Auto: default (150 draws: hands work to GPU earlier)") },
+            { "", t(a, "Auto"), t(a, "Auto: default for this game (Off for Sword/Shield)") },
             { "0", t(a, "Off"), t(a, "Off: all draws in one submission") },
             { "150", t(a, "150 draws"), t(a, "150 draws: hands work to GPU earlier, overlaps CPU and GPU") },
             { "100", t(a, "100 draws"), t(a, "100 draws: aggressive GPU concurrency for budget chips") } });
@@ -339,6 +339,10 @@ public final class GameMenu {
             { "full", t(a, "Full"), t(a, "Full: the game's textures as they are") }, { "half", t(a, "Half"), t(a, "Half: large textures at half size, less memory and GPU work") } });
         choice(a, "DM_VK_BC_TRANSCODE", t(a, "Texture format"), new String[][] { { "", t(a, "Auto"), t(a, "Auto: compact on GPUs without BC (Mali, Xclipse, PowerVR), converted once and kept") },
             { "off", t(a, "Full decode"), t(a, "Full decode: more memory, no conversion (Snapdragon is not affected either way)") } });
+        choice(a, "DM_VK_PREUPLOAD", t(a, "Texture pre-uploading"), new String[][] {
+            { "", t(a, "Auto"), t(a, "Auto: default (Off on budget chips to avoid GPU stalls)") },
+            { "0", t(a, "Off"), t(a, "Off: uploads textures on-demand in frame passes (smoothest on budget chips)") },
+            { "1", t(a, "On"), t(a, "On: uploads ahead in background (for high-end GPUs)") } });
     }
     private static void controls(Activity a) {
         heading(a, t(a, "Controller"));

@@ -956,7 +956,15 @@ static void pin_update(void) {
         if (f[c] > top) top = f[c];
         if (f[c] && (!low || f[c] < low)) low = f[c];
     }
-    if (!top) return;
+    if (!top) {
+        long ncpus = sysconf(_SC_NPROCESSORS_CONF);
+        if (ncpus <= 0 || ncpus > 32) ncpus = 8;
+        for (int c = 0; c < 32; c++) {
+            if (c < ncpus) f[c] = (c >= ncpus - 2) ? 2000000 : 1800000;
+            else f[c] = 0;
+        }
+        top = 2000000; low = 1800000;
+    }
 
     cpu_set_t set_top, set_all; CPU_ZERO(&set_top); CPU_ZERO(&set_all);
     int n_top = 0, n_all = 0;
@@ -992,9 +1000,19 @@ static void pin_update(void) {
         setpriority(PRIO_PROCESS, (id_t)rq_tid, -10);
     }
     if (pres_tid && pres_tid != game_tid && pres_tid != rq_tid) {
-        if (n_top > 2) sched_setaffinity(pres_tid, sizeof set_top, &set_top);
-        else sched_setaffinity(pres_tid, sizeof set_all, &set_all);
+        sched_setaffinity(pres_tid, sizeof set_all, &set_all);
         setpriority(PRIO_PROCESS, (id_t)pres_tid, -8);
+    }
+    extern int thr_frame_tids(int *out, int max) __attribute__((weak));
+    if (thr_frame_tids) {
+        int workers[8];
+        int nw = thr_frame_tids(workers, 8);
+        for (int i = 0; i < nw; i++) {
+            if (workers[i] && workers[i] != game_tid && workers[i] != rq_tid) {
+                setpriority(PRIO_PROCESS, (id_t)workers[i], -8);
+                sched_setaffinity(workers[i], sizeof set_all, &set_all);
+            }
+        }
     }
 }
 // ---------- Performance hints (Android 13+): one session for the game's main thread and the presenting thread, told every frame how long the presenting thread

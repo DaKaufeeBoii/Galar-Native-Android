@@ -12,6 +12,7 @@
 #include "dm.h"
 #include <errno.h>
 #include <sched.h>
+#include <sys/resource.h>
 #include <signal.h>
 #include <sys/mman.h>
 #include <time.h>
@@ -257,6 +258,9 @@ static void *thread_main(void *p) {
     t->mport = pthread_mach_thread_np(pthread_self()); t->host_work = &dm_host_work;
 #ifdef __linux__
     t->ltid = (int)gettid();
+#if defined(__ANDROID__)
+    if (t->prio <= 40) setpriority(PRIO_PROCESS, (id_t)t->ltid, -8);
+#endif
 #endif
     crash_thread_init();
     guest_thread_init();
