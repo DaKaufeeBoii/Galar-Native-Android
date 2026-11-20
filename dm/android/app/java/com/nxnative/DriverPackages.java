@@ -75,7 +75,7 @@ final class DriverPackages {
             if (MaliDriver.isPanvk(lib)) {   // a PanVK (Mali) package: named when it is a known build, else a warning with its digest
                 String known = MaliDriver.known(zipSha, MaliDriver.sha256(so));
                 note = known != null ? "\nVerified: " + known + " (SHA-256 matches the release)."
-                     : "\nNot a known PanVK release (SHA-256 " + zipSha.substring(0, 16) + "…): download drivers only from the developer's own Releases page (FristOneRR or faux123).";
+                     : "\nNot a known PanVK release (SHA-256 " + zipSha.substring(0, 16) + "\u2026): download drivers only from the developer's own Releases page (FristOneRR or faux123).";
             }
             String why = mismatch(c, so);
             if (why != null) return "Driver " + name + " installed, but not used: " + why + ". The phone's own driver stays.";
@@ -89,7 +89,7 @@ final class DriverPackages {
         String fam = GameSettings.profile(c)[0];
         if (gpu.contains("adreno") || (gpu.isEmpty() && fam.startsWith("sd"))) {   // the Turnip build for this Adreno: Gen8 for the 8xx series (8 Elite), the R builds for 6xx / 7xx
             boolean a8 = gpu.matches(".*adreno[^0-9]*8[0-9][0-9].*");
-            return new String[] { "Get Turnip for Adreno (StevenMXZ's releases: pick a " + (a8 ? "\"Turnip Gen8\" build for this Adreno 8xx)" : "\"Turnip v…-R\" build)"), TURNIP_RELEASES }; }
+            return new String[] { "Get Turnip for Adreno (StevenMXZ's releases: pick a " + (a8 ? "\"Turnip Gen8\" build for this Adreno 8xx)" : "\"Turnip v\u2026-R\" build)"), TURNIP_RELEASES }; }
         if (gpu.matches(".*mali-g(57|68|77|78|52|72|76).*")) return new String[] { "Get PanVK for Mali (FristOneRR's releases)", PANVK_RELEASES };
         // the CSF Malis (G610 / G615 / G620 / G710 / G715 / G720 / G725, Immortalis-G715 / G720 / G925): faux123's PanVK, the build that draws the game where Arm's own
         //   driver drew it white (#47 Mali-G615 MC6, #111 Immortalis-G925). (An earlier PanVK on a G615 gave a black picture at 0 fps, #71)

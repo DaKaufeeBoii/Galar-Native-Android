@@ -255,7 +255,7 @@ public final class SetupActivity extends Activity {
         // setup's own heat (#262: an 8+ Gen 1 ran hot through a 2 h 43 min setup): half the workers, from the next setup or shader update
         LinearLayout cs = card(more, null, T.t(this, "Setting up"), acc);
         check(cs, T.t(this, "Keep the phone cooler: half the workers (setup takes longer)"), "DM_SETUP_COOL", "1");
-        TextView sn = text(more, T.t(this, "Settings (picture, graphics, textures, controller buttons, touch controls, mods) are in the game: tap the menu button at the top left, or hold − on a controller for 3 seconds for the controller buttons."), 13, 0xFF8A909B, false);
+        TextView sn = text(more, T.t(this, "Settings (picture, graphics, textures, controller buttons, touch controls, mods) are in the game: tap the menu button at the top left, or hold \u2212 on a controller for 3 seconds for the controller buttons."), 13, 0xFF8A909B, false);
         sn.setPadding(px(4), px(16), px(4), 0);
         ScrollView sv = new ScrollView(this); sv.setFillViewport(true); sv.addView(root);
         sv.setBackground(new android.graphics.drawable.GradientDrawable(android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM, new int[] { mix(acc, 0xFF0B0C10, 0.8f), 0xFF0B0C10, 0xFF0B0C10 }));
@@ -429,10 +429,10 @@ public final class SetupActivity extends Activity {
     private void refresh() {
         if (driverText != null) { String d = envGet("DM_VK_DRIVER"); driverText.setText(d.isEmpty() ? T.t(this, "the phone's own Vulkan driver") : new File(d).getParentFile().getName() + " (" + new File(d).getName() + ")");
                                   if (maliBox != null) maliBox.setVisibility(MaliDriver.isPanvk(d) ? android.view.View.VISIBLE : android.view.View.GONE); }
-        if (!running) { List<String> n = new ArrayList<>(); for (String g : games) n.add("✓ " + new File(g).getName());
+        if (!running) { List<String> n = new ArrayList<>(); for (String g : games) n.add("\u2713 " + new File(g).getName());
             gameText.setText(games.isEmpty() ? T.t(this, "none chosen") : String.join("\n", n)); }
         boolean keys = new File(keysDir(), "prod.keys").exists();
-        keysText.setText(keys ? "✓ prod.keys" + (new File(keysDir(), "title.keys").exists() ? " + title.keys" : "") + " " + T.t(this, "(kept in the app's private storage)") : T.t(this, "none chosen"));
+        keysText.setText(keys ? "\u2713 prod.keys" + (new File(keysDir(), "title.keys").exists() ? " + title.keys" : "") + " " + T.t(this, "(kept in the app's private storage)") : T.t(this, "none chosen"));
         on(setup, !running && keys && !games.isEmpty()); on(play, !running && ready()); on(clear, !running && !games.isEmpty());
         play.setVisibility(ready() ? android.view.View.VISIBLE : android.view.View.GONE);
         on(saveExport, !running && setUp()); on(saveImport, !running && setUp());

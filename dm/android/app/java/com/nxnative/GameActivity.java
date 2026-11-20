@@ -110,7 +110,7 @@ public final class GameActivity extends NativeActivity implements InputManager.I
     private void handheld() {
         String h = GameSettings.handheld(); if (h == null || !GameSettings.get(this, "DM_HANDHELD_TOLD").isEmpty()) return;
         GameSettings.set(this, "DM_HANDHELD_TOLD", "1");
-        hint(T.t(this, "%s: its built-in controls are used. Hold − and + together for 1 s for the menu.", h));
+        hint(T.t(this, "%s: its built-in controls are used. Hold \u2212 and + together for 1 s for the menu.", h));
     }
     // a one-line hint at the top of the screen for a few seconds: not a pop-up (it takes no touch and no focus), the game keeps running and keeps its input
     private void hint(String s) {
@@ -143,7 +143,7 @@ public final class GameActivity extends NativeActivity implements InputManager.I
     private String gpuName;
     private String perfLine() {
         long f = -1, now = android.os.SystemClock.uptimeMillis(); try { f = nativeFrames(); } catch (UnsatisfiedLinkError e) { }
-        String fps = "–"; if (f >= 0 && perfFrames >= 0 && now > perfT) fps = String.valueOf(Math.round((f - perfFrames) * 1000.0 / (now - perfT))); perfFrames = f; perfT = now;
+        String fps = "\u2013"; if (f >= 0 && perfFrames >= 0 && now > perfT) fps = String.valueOf(Math.round((f - perfFrames) * 1000.0 / (now - perfT))); perfFrames = f; perfT = now;
         Intent bat = registerReceiver(null, new android.content.IntentFilter(Intent.ACTION_BATTERY_CHANGED));
         float temp = bat != null ? bat.getIntExtra(android.os.BatteryManager.EXTRA_TEMPERATURE, 0) / 10f : 0;
         int level = bat != null ? bat.getIntExtra(android.os.BatteryManager.EXTRA_LEVEL, -1) * 100 / Math.max(1, bat.getIntExtra(android.os.BatteryManager.EXTRA_SCALE, 100)) : -1;
@@ -151,7 +151,7 @@ public final class GameActivity extends NativeActivity implements InputManager.I
         if (gpuName == null || gpuName.isEmpty()) { gpuName = ""; try (java.io.BufferedReader r = new java.io.BufferedReader(new java.io.FileReader(new File(GameSettings.dir(this), "gpu.txt")))) { String l = r.readLine(); if (l != null) gpuName = l.trim(); } catch (java.io.IOException e) { } }
         android.os.PowerManager pm = getSystemService(android.os.PowerManager.class); String heat = "";
         if (pm != null) { int s = pm.getCurrentThermalStatus(); heat = s >= android.os.PowerManager.THERMAL_STATUS_SEVERE ? " " + T.t(this, "hot") : s >= android.os.PowerManager.THERMAL_STATUS_MODERATE ? " " + T.t(this, "warm") : ""; }
-        return String.format(java.util.Locale.ROOT, "%s fps · %.0f °C%s · %s · %s %.1f GB · %d%%", fps, temp, heat, gpuName.isEmpty() ? "GPU" : gpuName, T.t(this, "free"), mi.availMem / 1e9, level);
+        return String.format(java.util.Locale.ROOT, "%s fps \u00B7 %.0f \u00B0C%s \u00B7 %s \u00B7 %s %.1f GB \u00B7 %d%%", fps, temp, heat, gpuName.isEmpty() ? "GPU" : gpuName, T.t(this, "free"), mi.availMem / 1e9, level);
     }
     // Shaders the game saves while it runs (a mod's new effect, nvn_vk.c mtl_shader_seen): translated now in the background into the folder the engine watches
     // (setup_game.py --captures --live, nvn_vk.c live_check), so they draw a few seconds later instead of after a restart. Kept out of the game's way on every phone, nothing

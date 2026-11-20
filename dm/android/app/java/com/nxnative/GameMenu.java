@@ -54,7 +54,7 @@ public final class GameMenu {
     private static String framegenNote(Activity a) {
         String n; try { n = nativeFramegenNote(); } catch (UnsatisfiedLinkError e) { return null; }
         if (n == null || n.isEmpty()) return null;
-        if (n.equals("need60")) return t(a, "Off at 30 fps: frame generation needs the game at a locked 60 fps (Performance → Frame rate: 60).");
+        if (n.equals("need60")) return t(a, "Off at 30 fps: frame generation needs the game at a locked 60 fps (Performance \u2192 Frame rate: 60).");
         if (n.startsWith("paused:")) return t(a, "Paused: the game runs at %s fps here, and frame generation needs a locked 60. It comes back on by itself once the game holds 60.", n.substring(7));
         if (n.startsWith("cost:")) return t(a, "Off: even at its lightest it cost the game its own frames here (down to %s fps). Switch it off and on to try again.", n.substring(5));
         if (n.startsWith("slow:")) return t(a, "Off: this GPU needs %s ms for each picture, more than the game can spare. Switch it off and on to try again.", n.substring(5));
@@ -96,7 +96,7 @@ public final class GameMenu {
         LinearLayout head = new LinearLayout(a); head.setGravity(Gravity.CENTER_VERTICAL); head.setPadding(dp(a, 20), dp(a, 14), dp(a, 12), dp(a, 8));
         View dot = new View(a); dot.setBackground(round(accent(a), dp(a, 6), 0, 0)); head.addView(dot, new LinearLayout.LayoutParams(dp(a, 10), dp(a, 10)));
         TextView title = text(a, GameSettings.game(a)[1], 19, TEXT, true); title.setPadding(dp(a, 10), 0, 0, 0); head.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
-        TextView close = text(a, "✕", 20, SUB, false); close.setPadding(dp(a, 14), dp(a, 6), dp(a, 14), dp(a, 6)); close.setOnClickListener(v -> d.dismiss()); head.addView(close);
+        TextView close = text(a, "\u2715", 20, SUB, false); close.setPadding(dp(a, 14), dp(a, 6), dp(a, 14), dp(a, 6)); close.setOnClickListener(v -> d.dismiss()); head.addView(close);
         panel.addView(head);
         LinearLayout mid = new LinearLayout(a); mid.setOrientation(LinearLayout.HORIZONTAL);
         rail = new LinearLayout(a); rail.setOrientation(LinearLayout.VERTICAL); rail.setPadding(dp(a, 10), dp(a, 4), dp(a, 6), dp(a, 10));
@@ -192,7 +192,7 @@ public final class GameMenu {
     }
     private static void action(Activity a, String title, String sub, Runnable r) {
         LinearLayout c = card(a); LinearLayout row = titleRow(a, c, title, null);
-        row.addView(text(a, "›", 22, SUB, false));
+        row.addView(text(a, "\u203A", 22, SUB, false));
         if (sub != null && !sub.isEmpty()) { TextView s = text(a, sub, 13, SUB, false); s.setPadding(0, dp(a, 4), 0, 0); c.addView(s); }
         c.setOnClickListener(v -> r.run());
     }
@@ -352,7 +352,7 @@ public final class GameMenu {
         heading(a, t(a, "Controller"));
         choice(a, "DM_PAD_LAYOUT", t(a, "Controller buttons"), new String[][] { { "", t(a, "By position"), t(a, "By position, as on a Switch pad") },
                                                                                  { "labels", t(a, "By label"), t(a, "By label (the button marked A is A)") } });
-        action(a, t(a, "Remap controller buttons"), t(a, "Or hold − for 3 s on a controller. Hold − and + together for 1 s to open this menu."), () -> go("remap"));
+        action(a, t(a, "Remap controller buttons"), t(a, "Or hold \u2212 for 3 s on a controller. Hold \u2212 and + together for 1 s to open this menu."), () -> go("remap"));
         choice(a, "DM_RUMBLE", t(a, "Rumble"), new String[][] { { "", t(a, "On"), t(a, "On: the controller's motor, else the phone's") }, { "pad", t(a, "Controllers only"), "" },
                                                                  { "off", t(a, "Off"), "" } });
         // the right stick / camera, touch and controller alike (hle_hid.c rsens)
@@ -370,7 +370,7 @@ public final class GameMenu {
                                                                                 { "on", t(a, "On"), "" }, { "off", t(a, "Off"), "" } });
         slider(a, t(a, "Opacity"), "DM_TOUCH_OPACITY", 20, 100, 100, v -> v + " %");
         slider(a, t(a, "Fade after"), "DM_TOUCH_FADE", 0, 10, 3, v -> v == 0 ? t(a, "never fade") : t(a, "%d s without a touch", v));
-        action(a, t(a, "Move the touch controls"), t(a, "Drag a control to move it. To resize one, touch it, then pinch with two fingers anywhere. Double-tap to hide. Hold − for 2 s to save (hold + to reset)."), () -> {
+        action(a, t(a, "Move the touch controls"), t(a, "Drag a control to move it. To resize one, touch it, then pinch with two fingers anywhere. Double-tap to hide. Hold \u2212 for 2 s to save (hold + to reset)."), () -> {
             if (dlg != null) dlg.dismiss(); try { nativeEditTouch(); } catch (UnsatisfiedLinkError e) { } });
     }
     // Remapping (PadMapping.java, DM_PAD_MAPPING): tap a Switch button, then press the controller key for it (the panel takes the key: remapKey)
@@ -382,7 +382,7 @@ public final class GameMenu {
         for (String[] btn : PadMapping.BUTTONS) {
             LinearLayout c = card(a); LinearLayout row = titleRow(a, c, btn[1], null);
             Integer kc = map.get(btn[0]); boolean wait = btn[0].equals(capture);
-            row.addView(text(a, wait ? t(a, "Press a key…") : kc != null ? PadMapping.keyName(kc) : t(a, "default"), 14, wait ? accent(a) : SUB, wait));
+            row.addView(text(a, wait ? t(a, "Press a key\u2026") : kc != null ? PadMapping.keyName(kc) : t(a, "default"), 14, wait ? accent(a) : SUB, wait));
             if (wait) c.setBackground(round(CARD, dp(a, 16), dp(a, 2), accent(a)));
             c.setOnClickListener(x -> { capture = btn[0]; redraw(); });
         }
@@ -447,13 +447,13 @@ public final class GameMenu {
         for (File m : ms) {
             boolean on = !m.getName().startsWith("-");
             LinearLayout c = card(a); LinearLayout row = titleRow(a, c, plain(m), null); row.addView(pill(a, on ? t(a, "On") : t(a, "Off"), on));
-            if (cf.containsKey(m)) { TextView w = text(a, "⚠ " + t(a, "shares files with %d other mod(s)", cf.get(m).size()), 13, WARN, false); w.setPadding(0, dp(a, 4), 0, 0); c.addView(w); }
+            if (cf.containsKey(m)) { TextView w = text(a, "\u26A0 " + t(a, "shares files with %d other mod(s)", cf.get(m).size()), 13, WARN, false); w.setPadding(0, dp(a, 4), 0, 0); c.addView(w); }
             c.setOnClickListener(v -> { if (m.renameTo(new File(m.getParentFile(), on ? "-" + plain(m) : plain(m)))) RESTART.add("mods"); redraw(); });
         }
         note(a, where(a));
     }
     private static String where(Activity a) {
-        return t(a, "Put each mod in its own folder in Android/data/%s/files/mods/ — <mod>/romfs for files, <mod>/exefs for .pchtxt code patches (they must be made for %s %s).",
+        return t(a, "Put each mod in its own folder in Android/data/%s/files/mods/ \u2014 <mod>/romfs for files, <mod>/exefs for .pchtxt code patches (they must be made for %s %s).",
                  a.getPackageName(), GameSettings.game(a)[1], GameSettings.version(a));
     }
     // the load order: higher wins; each mod's notes, the files it shares, moving it, deleting it
@@ -468,19 +468,19 @@ public final class GameMenu {
             Map<File, Integer> sh = cf.get(m);
             if (sh != null) for (Map.Entry<File, Integer> e : sh.entrySet()) {
                 boolean wins = ms.indexOf(m) < ms.indexOf(e.getKey());
-                TextView w = text(a, "⚠ " + t(a, wins ? "Replaces %d of the same files as %s: this mod's are used (it is higher)." : "Replaces %d of the same files as %s: that mod's are used (it is higher).", e.getValue(), plain(e.getKey())), 13, WARN, false);
+                TextView w = text(a, "\u26A0 " + t(a, wins ? "Replaces %d of the same files as %s: this mod's are used (it is higher)." : "Replaces %d of the same files as %s: that mod's are used (it is higher).", e.getValue(), plain(e.getKey())), 13, WARN, false);
                 w.setPadding(0, dp(a, 4), 0, 0); c.addView(w);
             }
             LinearLayout r = new LinearLayout(a); c.addView(r);
-            if (i > 0) button(a, r, "↑ " + t(a, "Move up"), false, () -> { java.util.Collections.swap(ms, k, k - 1); saveOrder(a, ms); RESTART.add("mods"); redraw(); });
-            if (i < ms.size() - 1) button(a, r, "↓ " + t(a, "Move down"), false, () -> { java.util.Collections.swap(ms, k, k + 1); saveOrder(a, ms); RESTART.add("mods"); redraw(); });
+            if (i > 0) button(a, r, "\u2191 " + t(a, "Move up"), false, () -> { java.util.Collections.swap(ms, k, k - 1); saveOrder(a, ms); RESTART.add("mods"); redraw(); });
+            if (i < ms.size() - 1) button(a, r, "\u2193 " + t(a, "Move down"), false, () -> { java.util.Collections.swap(ms, k, k + 1); saveOrder(a, ms); RESTART.add("mods"); redraw(); });
             button(a, r, t(a, "Edit notes"), false, () -> notes(a, m));
             button(a, r, t(a, "Delete"), false, () -> confirm(a, t(a, "Delete this mod from the phone?"), () -> { deleteTree(m); ms.remove(m); saveOrder(a, ms); RESTART.add("mods"); go("order"); }));
         }
         LinearLayout r = new LinearLayout(a); body.addView(r); button(a, r, t(a, "Done"), true, () -> go("mods"));
     }
     private static void notes(Activity a, File m) {
-        body.removeAllViews(); heading(a, plain(m) + " · " + t(a, "Notes"));
+        body.removeAllViews(); heading(a, plain(m) + " \u00B7 " + t(a, "Notes"));
         LinearLayout c = card(a); EditText e = field(a, c, ""); e.setSingleLine(false); e.setMinLines(5); e.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
         try { e.setText(new String(java.nio.file.Files.readAllBytes(new File(m, "notes.txt").toPath()), java.nio.charset.StandardCharsets.UTF_8)); } catch (IOException x) { }
         LinearLayout r = new LinearLayout(a); body.addView(r);
@@ -645,7 +645,7 @@ public final class GameMenu {
     }
     private static void driverRow(Activity a, String name, boolean on, Runnable use) {
         LinearLayout c = card(a); LinearLayout row = titleRow(a, c, name, null);
-        if (on) { row.addView(text(a, "✓", 18, accent(a), true)); c.setBackground(round(CARD, dp(a, 16), dp(a, 2), accent(a))); }
+        if (on) { row.addView(text(a, "\u2713", 18, accent(a), true)); c.setBackground(round(CARD, dp(a, 16), dp(a, 2), accent(a))); }
         c.setOnClickListener(v -> { use.run(); RESTART.add("driver"); redraw(); });
     }
 

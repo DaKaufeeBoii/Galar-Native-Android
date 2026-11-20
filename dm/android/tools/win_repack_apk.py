@@ -40,11 +40,11 @@ def main():
                 java_files.append(os.path.join(root, f))
 
     sources_list_file = os.path.join(CLASSES_DIR, "sources.txt")
-    with open(sources_list_file, "w") as f:
+    with open(sources_list_file, "w", encoding="utf-8") as f:
         for jf in java_files:
             f.write(jf.replace("\\", "/") + "\n")
 
-    run(f'javac -cp "{ANDROID_JAR}" -d "{CLASSES_DIR}" @"{sources_list_file}"')
+    run(f'javac -encoding UTF-8 -cp "{ANDROID_JAR}" -d "{CLASSES_DIR}" @"{sources_list_file}"')
     print("Java compilation complete.")
 
     print("\n=== Step 2: Generating classes.dex ===")

@@ -29,7 +29,7 @@ final class GameSettings {
                     String l; while ((l = r.readLine()) != null) { String[] a = l.split("\t"); if (a.length >= 3) g.add(a); } } catch (Exception e) { }
                 if (!g.isEmpty()) break;
             }
-            if (g.isEmpty()) g.add(new String[] { "01008DB008C2C000", "Pokémon Shield", "PokemonShield" });
+            if (g.isEmpty()) g.add(new String[] { "01008DB008C2C000", "Pok\u00E9mon Shield", "PokemonShield" });
             games = g;
         }
         return games;
