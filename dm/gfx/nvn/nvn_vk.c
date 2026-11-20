@@ -1822,7 +1822,7 @@ static VkDeviceSize up_slot(int bck, int bw, int bh, int bpb, int obw, int obh, 
     VkDeviceSize out = (VkDeviceSize)((w + obw - 1) / obw) * obpb * ((h + obh - 1) / obh), blocks = (VkDeviceSize)((w + bw - 1) / bw) * bpb * ((h + bh - 1) / bh);
     return z * (bck && blocks > out ? blocks : out);
 }
-static int tex_upload_(vtex *x, const tex_t *t, uint64_t *copy_ns) {
+static int tex_upload_ex(vtex *x, const tex_t *t, uint64_t *copy_ns, VkCommandBuffer ext_cb, VkBuffer *out_sb, vmalloc_t *out_tmp) {
     int bw, bh, bpb = nvn_fmt_bpb(t->d.format, &bw, &bh); if (!bpb) return -1;
     // BC on a GPU without it: the blocks are deswizzled into scratch and decoded into staging as plain texels (bc_decode.c)
     int bck = nvn_fmt_vk_decode(t->d.format), etk = nvn_fmt_vk_transcode(t->d.format), obpb = etk ? bc_transcode_bytes(etk) : bck ? bc_texel_bytes(bck) : bpb,
@@ -1840,12 +1840,12 @@ static int tex_upload_(vtex *x, const tex_t *t, uint64_t *copy_ns) {
     static int vkind = -100, vleft = 8; if (vkind == -100) { const char *e = getenv("DM_VK_BC_GPU_VERIFY"); vkind = e && *e ? atoi(e) : 0; }
     int vfy = vkind && bck == vkind && !etk && (g_bcgpu & 1) && bc_gpu_can(bck, 0) && !x->is3d && vleft > 0; if (vfy) vleft--;
     VkBuffer vb = VK_NULL_HANDLE; vmalloc_t vm = {0}; uint8_t *vexp = NULL, *vdone = vfy ? calloc(x->levels * layers, 1) : NULL;
-    VkCommandBuffer cb = vfy ? NULL : ucb(); int once = !cb; if (once) cb = once_begin();
+    VkCommandBuffer cb = ext_cb ? ext_cb : (vfy ? NULL : ucb()); int once = !cb; if (once) cb = once_begin();
     if (vfy) { VkBufferCreateInfo bi = { .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, .size = total ? total : 16, .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT }; VKCHECK(vkCreateBuffer(g_dev, &bi, NULL, &vb));
         VkMemoryRequirements rq; vkGetBufferMemoryRequirements(g_dev, vb, &rq); vm = vk_alloc(rq, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, 1);
         VKCHECK(vkBindBufferMemory(g_dev, vb, vm.b->mem, vm.off)); vexp = calloc(1, total ? total : 16); memset((uint8_t *)vm.b->map + vm.off, 0xcd, total); }
     VkBuffer sb; VkDeviceSize so = 0; uint8_t *sp; vmalloc_t tmp = {0};
-    if (!once) sp = arena_alloc(g_sub, total ? total : 16, &sb, &so);
+    if (!once && !ext_cb) sp = arena_alloc(g_sub, total ? total : 16, &sb, &so);
     else { VkBufferCreateInfo bi = { .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, .size = total ? total : 16, .usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT }; VKCHECK(vkCreateBuffer(g_dev, &bi, NULL, &sb));
            VkMemoryRequirements rq; vkGetBufferMemoryRequirements(g_dev, sb, &rq); tmp = vk_alloc(rq, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, 1);
            VKCHECK(vkBindBufferMemory(g_dev, sb, tmp.b->mem, tmp.off)); sp = (uint8_t *)tmp.b->map + tmp.off; }
@@ -1883,6 +1883,10 @@ static int tex_upload_(vtex *x, const tex_t *t, uint64_t *copy_ns) {
     if (nrg) vkCmdCopyBufferToImage(cb, sb, x->img, VK_IMAGE_LAYOUT_GENERAL, nrg, rg);
     free(rg); g_up_bytes += total;
     if (once) { once_end(cb); vkDestroyBuffer(g_dev, sb, NULL); vk_free(tmp); }
+    else if (ext_cb) {
+        if (out_sb) *out_sb = sb;
+        if (out_tmp) *out_tmp = tmp;
+    }
     if (vfy) {   // texel by texel (8 bytes: RGBA16F), level by level, layer by layer, in the staging layout
         const uint8_t *got = (const uint8_t *)vm.b->map + vm.off; VkDeviceSize o = 0; int said = 0; unsigned long long bad = 0, all = 0;
         for (unsigned l = 0; l < x->levels; l++) { uint32_t w = x->w >> l ? x->w >> l : 1, h = x->h >> l ? x->h >> l : 1;
@@ -1896,6 +1900,9 @@ static int tex_upload_(vtex *x, const tex_t *t, uint64_t *copy_ns) {
     }
     #undef SLOT
     return 0;
+}
+static int tex_upload_(vtex *x, const tex_t *t, uint64_t *copy_ns) {
+    return tex_upload_ex(x, t, copy_ns, VK_NULL_HANDLE, NULL, NULL);
 }
 static vtex *pkg_upload(const tex_t *t) {
     vtex *x = tex_new(t, 1); if (!x) return NULL;
@@ -1936,21 +1943,107 @@ static long pre_budget(void) {
     b = mb << 20; VLOG("packaged textures: up to %ld MB uploaded ahead and not drawn yet", mb); return b;
 }
 static int pre_on(void) { static int v = -1; if (v < 0) { const char *e = getenv("DM_VK_PREUPLOAD"); v = !(e && !strcmp(e, "0")); VLOG("packaged textures: %s", v ? "uploaded ahead by a worker as the game creates them" : "uploaded at their first use (DM_VK_PREUPLOAD=0)"); } return v; }
+
+static VkCommandPool g_pre_pool;
+static VkCommandBuffer pre_begin(void) {
+    if (!g_pre_pool) {
+        VkCommandPoolCreateInfo pci = { .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO, .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT, .queueFamilyIndex = g_qf };
+        VKCHECK(vkCreateCommandPool(g_dev, &pci, NULL, &g_pre_pool));
+    }
+    VkCommandBufferAllocateInfo cai = { .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO, .commandPool = g_pre_pool, .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY, .commandBufferCount = 1 };
+    VkCommandBuffer cb; VKCHECK(vkAllocateCommandBuffers(g_dev, &cai, &cb));
+    VkCommandBufferBeginInfo bi = { .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT };
+    VKCHECK(vkBeginCommandBuffer(cb, &bi)); barrier_all(cb);
+    return cb;
+}
+static void pre_end(VkCommandBuffer cb) {
+    barrier_all(cb); barrier_host(cb); VKCHECK(vkEndCommandBuffer(cb));
+    VkFenceCreateInfo fi = { .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO }; VkFence f; VKCHECK(vkCreateFence(g_dev, &fi, NULL, &f));
+    VkSubmitInfo si = { .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO, .commandBufferCount = 1, .pCommandBuffers = &cb };
+    shadow_sync();
+    pthread_mutex_lock(&g_qmu); VkResult r = vkQueueSubmit(g_q, 1, &si, f); pthread_mutex_unlock(&g_qmu);
+    if (r) VDIE("pre-upload submit failed: %d", r);
+    vk_wait(NULL, f, UINT64_MAX); vkDestroyFence(g_dev, f, NULL);
+    vkFreeCommandBuffers(g_dev, g_pre_pool, 1, &cb);
+}
+
+enum { PRE_BATCH_MAX = 32 };
 static void *pre_main(void *unused) {
-    (void)unused; setpriority(PRIO_PROCESS, (id_t)gettid(), 4);   // (below the game's threads: it only saves them work)
+    (void)unused; setpriority(PRIO_PROCESS, (id_t)gettid(), 0);   // normal priority, below the game threads (-12, -10, -8) but not starved to little cores
     for (;;) {
         pthread_mutex_lock(&g_pre_mu);
         while (g_pre_tail == g_pre_head) pthread_cond_wait(&g_pre_cv, &g_pre_mu);
-        tex_t c = g_pre[g_pre_tail++ % PRE_N];
+        unsigned n = g_pre_head - g_pre_tail;
+        if (n > PRE_BATCH_MAX) n = PRE_BATCH_MAX;
+        tex_t batch[PRE_BATCH_MAX];
+        for (unsigned i = 0; i < n; i++) batch[i] = g_pre[g_pre_tail++ % PRE_N];
         pthread_mutex_unlock(&g_pre_mu);
-        pthread_mutex_lock(&g_smu); int want = nvn_hm_get(&g_tex_live, &c.serial) && !serial_get(c.serial); pthread_mutex_unlock(&g_smu);
-        if (!want) { atomic_fetch_add(&g_pre_late, 1); continue; }   // (released, or already uploaded by its first use)
-        if (atomic_load(&g_pre_unused) + (long)c.L.size > pre_budget()) { atomic_fetch_add(&g_pre_full, 1); continue; }   // (over the budget: its first use uploads it)
-        vtex *x = pkg_upload(&c); if (!x) continue;
-        pthread_mutex_lock(&g_smu);
-        if (nvn_hm_get(&g_tex_live, &c.serial) && !serial_get(c.serial)) { atomic_store(&x->pre, 1); atomic_fetch_add(&g_pre_unused, (long)x->a.size); serial_put(c.serial, x); atomic_fetch_add(&g_pre_done, 1); g_pkg_uploads++; }
-        else atomic_fetch_add(&g_pre_late, 1);
-        pthread_mutex_unlock(&g_smu); vtex_unref(x);
+
+        typedef struct { vtex *x; tex_t t; VkBuffer sb; vmalloc_t tmp; } pre_item;
+        pre_item items[PRE_BATCH_MAX];
+        int nitems = 0;
+        VkDeviceSize batch_bytes = 0;
+
+        for (unsigned i = 0; i < n; i++) {
+            tex_t c = batch[i];
+            pthread_mutex_lock(&g_smu);
+            int want = nvn_hm_get(&g_tex_live, &c.serial) && !serial_get(c.serial);
+            pthread_mutex_unlock(&g_smu);
+            if (!want) { atomic_fetch_add(&g_pre_late, 1); continue; }   // (released, or already uploaded by its first use)
+            if (atomic_load(&g_pre_unused) + (long)c.L.size > pre_budget()) { atomic_fetch_add(&g_pre_full, 1); continue; }   // (over the budget: its first use uploads it)
+
+            vtex *x = tex_new(&c, 1);
+            if (!x) continue;
+            nvn_dirty_protect(c.mem, c.L.size);
+            x->stamp = nvn_dirty_now();
+
+            items[nitems].x = x;
+            items[nitems].t = c;
+            items[nitems].sb = VK_NULL_HANDLE;
+            items[nitems].tmp = (vmalloc_t){0};
+            nitems++;
+            batch_bytes += c.L.size;
+            if (batch_bytes >= 24 * 1024 * 1024) break;
+        }
+
+        if (!nitems) continue;
+
+        VkCommandBuffer cb = pre_begin();
+        int nrecorded = 0;
+        for (int i = 0; i < nitems; i++) {
+            uint64_t cn = 0;
+            if (tex_upload_ex(items[i].x, &items[i].t, &cn, cb, &items[i].sb, &items[i].tmp) == 0) {
+                items[i].x->pkg = 1;
+                items[i].x->span = nvn_dirty_span(items[i].t.mem, items[i].t.L.size);
+                items[i].x->seen = nvn_dirty_now();
+                nrecorded++;
+            }
+        }
+
+        if (nrecorded) pre_end(cb);
+        else {
+            VKCHECK(vkEndCommandBuffer(cb));
+            vkFreeCommandBuffers(g_dev, g_pre_pool, 1, &cb);
+        }
+
+        for (int i = 0; i < nitems; i++) {
+            pthread_mutex_lock(&g_smu);
+            if (items[i].sb && nvn_hm_get(&g_tex_live, &items[i].t.serial) && !serial_get(items[i].t.serial)) {
+                atomic_store(&items[i].x->pre, 1);
+                atomic_fetch_add(&g_pre_unused, (long)items[i].x->a.size);
+                serial_put(items[i].t.serial, items[i].x);
+                atomic_fetch_add(&g_pre_done, 1);
+                g_pkg_uploads++;
+            } else {
+                atomic_fetch_add(&g_pre_late, 1);
+            }
+            pthread_mutex_unlock(&g_smu);
+            if (items[i].sb) {
+                vkDestroyBuffer(g_dev, items[i].sb, NULL);
+                vk_free(items[i].tmp);
+            }
+            vtex_unref(items[i].x);
+        }
     }
     return NULL;
 }

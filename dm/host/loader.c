@@ -588,7 +588,12 @@ void dm_fps_scene_file(const char *path) {   // hle_fs.c h_fs_OpenFile
     if (!path || !g_fp.on) return;
     int crowd = strstr(path, "_stadiumcrowd") != NULL, zone = !crowd && strstr(path, "/script/amx/z_") != NULL;
     if (!crowd && !zone) return;
-    static int c30 = -1; if (c30 < 0) { const char *e = getenv("DM_CROWD_30"); c30 = !(e && !strcmp(e, "0")); }
+    static int c30 = -1;
+    if (c30 < 0) {
+        const char *gs = getenv("DM_GAME_STEP");
+        if (gs && !strcmp(gs, "realtime")) c30 = 0;
+        else { const char *e = getenv("DM_CROWD_30"); c30 = !(e && !strcmp(e, "0")); }
+    }
     if (crowd && c30 && !__atomic_exchange_n(&g_fp_native, 1, __ATOMIC_RELAXED)) LOG("frame rate: the stadium crowd is loading (%s): the game's own 30 until a field area", path);
     if (zone && __atomic_exchange_n(&g_fp_native, 0, __ATOMIC_RELAXED)) LOG("frame rate: a field area loads (%s)", path);
 }
@@ -638,7 +643,9 @@ static int fps_patch(module_t *m, uint64_t lim, int64_t p0, int64_t p1) {
         if (!dm_step_table) LOG("%s: the frame-time table around +%#llx is not the game's own: only its interval-2 entry follows the real step", m->name, (unsigned long long)dt); }
     wi = 0x52800021u; wd = (uint32_t)((1000000000ull + (uint64_t)fps - 1) / (uint64_t)fps);
     { const char *ns = getenv("DM_NATIVE_START");
-      if (fps == 60 && live && !(ns && !strcmp(ns, "0"))) {   // the game's own 30 until a field area or 60 from the menu (dm_fps_tick)
+      const char *gs = getenv("DM_GAME_STEP");
+      int realtime = gs && !strcmp(gs, "realtime");
+      if (fps == 60 && live && !(ns && !strcmp(ns, "0")) && !realtime) {   // the game's own 30 until a field area or 60 from the menu (dm_fps_tick)
         g_fp.itv = m->base + itv; g_fp.dt = m->base + dt; g_fp.wi = wi; g_fp.wd = wd; g_fp.fps = fps; g_fp.want = want == 60 ? 60 : 30; g_fp.on = 1;
         memcpy(&g_fp.owi, m->base + itv, 4); g_fp.owd = 33333334u;   // (the game's own words: the patch can come out again)
         __atomic_store_n(&dm_fps_live, 30, __ATOMIC_RELAXED);
