@@ -227,6 +227,11 @@ JNIEXPORT jboolean JNICALL Java_com_nxnative_GameMenu_nativeSetting(JNIEnv *env,
             fprintf(stderr, "frame rate: %d fps, switched while playing\n", t);
         } else now = 0;
     }
+    else if (!strcmp(k, "DM_GAME_STEP")) {
+        extern void dm_game_step_set(const char *) __attribute__((weak));
+        if (v) setenv("DM_GAME_STEP", v, 1); else unsetenv("DM_GAME_STEP");
+        if (dm_game_step_set) dm_game_step_set(v);
+    }
     else if (!strcmp(k, "DM_TOUCH_OPACITY") || !strcmp(k, "DM_TOUCH_FADE") || !strcmp(k, "DM_TOUCH_HAPTIC") || !strcmp(k, "DM_TOUCH_L3R3") || !strcmp(k, "DM_TOUCH_STICKS")) touch_ui_setting(k, v);
     else if (!strcmp(k, "DM_RUMBLE")) { touch_ui_setting(k, v); now = 0; }
     // the 3D render scale (☰ → Graphics → 3D render scale; hle_resscale.c's cap on the game's own scale, Sword / Shield): live. Auto = what the Graphics level gives
@@ -888,8 +893,8 @@ static void host_start(void) {
     //   both "handheld set, TV flag 0"; no crash reported in TV mode). DM_OPMODE=0 in env.txt still gives handheld
     { const char *g = getenv("DM_GRAPHICS"); int galar = !strcmp(DM_GAME_ID, "01008DB008C2C000");
       if (g && (!strcmp(g, "low") || !strcmp(g, "lowest"))) setenv("DM_OPMODE", galar ? "1" : "0", 0); else if (g && (!strcmp(g, "high") || !strcmp(g, "auto"))) setenv("DM_OPMODE", "1", 0);
-      if (g && !strcmp(g, "lowest")) setenv("DM_RES_CAP", galar ? "0.50" : "0.75", 0);
-      else if (g && !strcmp(g, "low") && galar) setenv("DM_RES_CAP", "0.55", 0); }
+      if (g && !strcmp(g, "lowest")) setenv("DM_RES_CAP", galar ? "0.40" : "0.75", 0);
+      else if (g && !strcmp(g, "low") && galar) setenv("DM_RES_CAP", "0.45", 0); }
 #if defined(DM_GAME_ANDROID_OPMODE) && DM_GAME_ANDROID_OPMODE >= 0
     { char m[4]; snprintf(m, sizeof m, "%d", DM_GAME_ANDROID_OPMODE); setenv("DM_OPMODE", m, 0); }   // the profile's android_op_mode (env.txt DM_OPMODE wins)
 #endif   // real sound output (AAudio, compat/aaudio_unit.c); env.txt can set 0

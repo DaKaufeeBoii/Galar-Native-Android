@@ -3621,12 +3621,11 @@ static void desc_flush(VkPipelineBindPoint bp, VkPipelineLayout pl, VkDescriptor
     vkCmdBindDescriptorSets(CB(), bp, pl, 0, 1, &ds, 0, NULL);
     D.n = 0;
 }
-static void push_stage(vshader *s, int st, VkPipelineBindPoint bp, VkPipelineLayout pl) {
+static void push_stage_locked(vshader *s, int st, VkPipelineBindPoint bp, VkPipelineLayout pl) {
     if (!s || !s->nres) return;
     VkWriteDescriptorSet w_[64]; VkDescriptorBufferInfo bi_[64]; VkDescriptorImageInfo ii_[64]; VkBufferView bv_[64]; uint32_t nw = 0;
     VkWriteDescriptorSet *w = w_; VkDescriptorBufferInfo *bi = bi_; VkDescriptorImageInfo *ii = ii_; VkBufferView *bv = bv_;
     if (g_np) { if (D.n + 64 > 320) D.n = 320 - 64; w = D.w + D.n; bi = D.bi + D.n; ii = D.ii + D.n; bv = D.bv + D.n; }
-    pthread_mutex_lock(&g_rmu);
     for (int i = 0; i < s->nres; i++) {
         const spv_res *r = &s->res[i]; const vres_how *h = &s->how[i];
         w[nw] = (VkWriteDescriptorSet){ .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstBinding = r->binding + s->shift, .descriptorCount = 1, .descriptorType = desc_type(r->kind) };
@@ -3729,9 +3728,14 @@ static void push_stage(vshader *s, int st, VkPipelineBindPoint bp, VkPipelineLay
             }
         }
     }
-    pthread_mutex_unlock(&g_rmu);
     if (g_np) D.n += nw;
     else if (nw) p_push(CB(), bp, pl, 0, nw, w);
+}
+static void push_stage(vshader *s, int st, VkPipelineBindPoint bp, VkPipelineLayout pl) {
+    if (!s || !s->nres) return;
+    pthread_mutex_lock(&g_rmu);
+    push_stage_locked(s, st, bp, pl);
+    pthread_mutex_unlock(&g_rmu);
 }
 
 // ================= Draws =================
@@ -3908,7 +3912,11 @@ static void draw_(const p_draw *dw, const p_draw_idx *di, uint64_t *mark) {
     else vkCmdBindVertexBuffers(cb, 0, 17, vb, vo);   // (the strides are in the pipeline: sst)
     if (mark) mark[2] = mono_ns();
     VkPipelineLayout pl = prog_layout(pr, 0); g_np = pr->np[0];
-    for (int st = 0; st < 5; st++) push_stage(pr->sh[st], st, VK_PIPELINE_BIND_POINT_GRAPHICS, pl);
+    int need_rmu = 0;
+    for (int st = 0; st < 5; st++) if (pr->sh[st] && pr->sh[st]->nres) { need_rmu = 1; break; }
+    if (need_rmu) pthread_mutex_lock(&g_rmu);
+    for (int st = 0; st < 5; st++) push_stage_locked(pr->sh[st], st, VK_PIPELINE_BIND_POINT_GRAPHICS, pl);
+    if (need_rmu) pthread_mutex_unlock(&g_rmu);
     if (mark) mark[3] = mono_ns();
     if (tfcap) {   // the capture buffers, then the draw, then its writes made visible to what reads them (vertex streams, shaders, copies)
         VkWriteDescriptorSet w_[4]; VkDescriptorBufferInfo bi_[4]; uint32_t nw = 0;

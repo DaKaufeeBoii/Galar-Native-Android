@@ -489,7 +489,7 @@ static int pchtxt_dir(module_t *m, uint64_t lim, int64_t p0, int64_t p1) {
 }
 // Built-in patches. (The 16:9 that PR #48 patched alone, MOVK X9, #0x8e39 / #0x3fe3 at +0x607de8, is a camera object's default aspect, which the game replaces
 // for the gameplay camera: patched alone, the picture was unchanged. wide_patch below also patches where the gameplay camera takes it, and the culling.)
-int dm_step_hz; uint8_t *dm_step_word;   // the high frame rate below: its rate and the game's step word, which hle_nvn.c vstep_tick rewrites every frame
+int dm_step_hz; uint8_t *dm_step_word; uint8_t *dm_step_table;   // the high frame rate below: its rate, the game's step word, and the 5-entry table
 static int fps_patch(module_t *m, uint64_t lim, int64_t p0, int64_t p1);
 // Built-in community mods (builtin_mods.h, from dm/games/*/builtin_mods/*.pchtxt), each behind a setting: Scarlet / Violet 4.0.0's dynamic frame rate (Fl4sh's ASM
 // "Dynamic FPS": up to 60, the game's step from the time each frame really took) with DM_FPS_TARGET=60, their 2048×2048 shadow maps (Fl4sh's "2K Shadows") with
@@ -600,9 +600,9 @@ static int fp_write(int patched) {
     __atomic_store_n((uint32_t *)g_fp.itv, patched ? g_fp.wi : g_fp.owi, __ATOMIC_RELEASE);
     mprotect(page, (size_t)pg, PROT_READ | PROT_EXEC);
     __builtin___clear_cache((char *)g_fp.itv, (char *)g_fp.itv + 4);
-    if (!patched) dm_step_word = NULL;   // (the host stops feeding the step before the game's own value goes back)
+    if (!patched) { dm_step_word = NULL; dm_step_table = NULL; }   // (the host stops feeding the step before the game's own value goes back)
     dm_guest_write_prepare(g_fp.dt, 4); __atomic_store_n((uint32_t *)g_fp.dt, patched ? g_fp.wd : g_fp.owd, __ATOMIC_RELAXED);
-    if (patched) { dm_step_hz = g_fp.fps; dm_step_word = g_fp.dt; }
+    if (patched) { dm_step_hz = g_fp.fps; dm_step_word = g_fp.dt; if (g_fp.dt) dm_step_table = g_fp.dt - 8; }
     g_fp.patched = patched; return 1;
 }
 // Each present (hle_nvn.c, the present thread, before the step is decided): the patch in or out as asked
@@ -632,6 +632,10 @@ static int fps_patch(module_t *m, uint64_t lim, int64_t p0, int64_t p1) {
         LOG("[RED] %s: %d fps patch not applied (%s: the step word lies in code, or that code was rewritten)", m->name, fps, FPS_SITES[si].game); return 0; }
     uint32_t wi, wd; memcpy(&wi, m->base + itv, 4); memcpy(&wd, m->base + dt, 4);
     if ((wi != 0x2a1503e1u && wi != 0x52800041u) || wd != 33333334u) { LOG("[RED] %s: %d fps patch not applied (unexpected words %08x %u)", m->name, fps, wi, wd); return 0; }
+    {   static const uint64_t own[5] = { 16666667, 33333334, 50000000, 66666667, 83333334 }; uint64_t t[5];
+        if (dt >= 8 && dt - 8 >= m->text_end && dt + 32 <= lim) { memcpy(t, m->base + dt - 8, sizeof t);
+            if (!memcmp(t, own, sizeof t)) dm_step_table = m->base + dt - 8; }
+        if (!dm_step_table) LOG("%s: the frame-time table around +%#llx is not the game's own: only its interval-2 entry follows the real step", m->name, (unsigned long long)dt); }
     wi = 0x52800021u; wd = (uint32_t)((1000000000ull + (uint64_t)fps - 1) / (uint64_t)fps);
     { const char *ns = getenv("DM_NATIVE_START");
       if (fps == 60 && live && !(ns && !strcmp(ns, "0"))) {   // the game's own 30 until a field area or 60 from the menu (dm_fps_tick)
@@ -643,6 +647,7 @@ static int fps_patch(module_t *m, uint64_t lim, int64_t p0, int64_t p1) {
         return 2; } }
     memcpy(m->base + itv, &wi, 4); memcpy(m->base + dt, &wd, 4);
     dm_step_hz = fps; dm_step_word = m->base + dt;
+    if (dm_step_table) dm_step_table = m->base + dt - 8;
     if (fps == 60 && live) __atomic_store_n(&dm_fps_live, want == 60 ? 60 : 30, __ATOMIC_RELAXED);
     LOG("%s: %d fps patch for %s (present interval 1 at +%#llx, step %.2f ms at +%#llx, then paced by the host)%s", m->name, fps, FPS_SITES[si].game, (unsigned long long)itv, wd / 1e6,
         (unsigned long long)dt, dm_fps_live ? (want == 60 ? "; live frame rate, now 60 (the menu switches 30 / 60 at once)" : "; live frame rate, now 30 (the menu switches 30 / 60 at once)") : "");

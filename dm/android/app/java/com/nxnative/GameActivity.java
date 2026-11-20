@@ -204,8 +204,15 @@ public final class GameActivity extends NativeActivity implements InputManager.I
             // Sword / Shield: no split submissions (nvn_vk.c sub_split): they need none (3-5 ms of work a frame on a Galaxy S25+) and with them Sword flashed white
             //   (v0.40, pulled); Scarlet / Violet keep them, they hold 30 fps with them. env.txt's own DM_VK_SPLIT wins
             if (!GameSettings.paldea(this) && GameSettings.get(this, "DM_VK_SPLIT").isEmpty()) android.system.Os.setenv("DM_VK_SPLIT", "0", true);
-            // On budget chips (sd6), disable background texture pre-uploading to prevent one-off GPU queue stalls
-            if ("sd6".equals(p[0]) && GameSettings.get(this, "DM_VK_PREUPLOAD").isEmpty()) android.system.Os.setenv("DM_VK_PREUPLOAD", "0", true);
+            // On budget chips (sd6 / low):
+            // 1) disable background texture pre-uploading to prevent GPU queue stalls
+            // 2) default to dynamic real-time game speed so the game runs at full speed instead of slow motion
+            // 3) default to 45% 3D render scale to cut fragment shading by 33%
+            if ("sd6".equals(p[0]) || "low".equals(p[0])) {
+                if (GameSettings.get(this, "DM_VK_PREUPLOAD").isEmpty()) android.system.Os.setenv("DM_VK_PREUPLOAD", "0", true);
+                if (GameSettings.get(this, "DM_GAME_STEP").isEmpty()) android.system.Os.setenv("DM_GAME_STEP", "realtime", true);
+                if (GameSettings.get(this, "DM_RES_CAP").isEmpty()) android.system.Os.setenv("DM_RES_CAP", "0.45", true);
+            }
             StringBuilder hz = new StringBuilder(); for (float r : GameSettings.refreshRates(this)) hz.append(hz.length() > 0 ? "," : "").append(Math.round(r));
             android.system.Os.setenv("DM_DISPLAY_HZ", hz.toString(), true);
         } catch (Exception e) { }

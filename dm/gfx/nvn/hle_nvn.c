@@ -1527,6 +1527,7 @@ static nvn_fstep g_fs;   // present thread only
 static _Atomic int g_fs_k;   // the hold presentation follows (0 = not decided yet)
 // Shield's high frame rate (loader.c fps_patch, DM_FPS_TARGET): the same controller with slots of 1 / dm_step_hz, the step going into the game's own step word
 __attribute__((weak)) int dm_step_hz; __attribute__((weak)) uint8_t *dm_step_word;   // graphics unit tests have no loader
+__attribute__((weak)) uint8_t *dm_step_table;   // the game's 5-entry table (loader.c): intervals 1-5
 __attribute__((weak)) int dm_fps_live;   // loader.c: the live target, 30 or 60 (0: not live); the menu changes it while playing
 static int vstep_on(void) { return &dm_step_hz && dm_step_hz > 0 && &dm_step_word && dm_step_word && !dm_detclock_enabled(); }
 static int live_fps(void) { return &dm_fps_live ? __atomic_load_n(&dm_fps_live, __ATOMIC_RELAXED) : 0; }
@@ -1602,11 +1603,19 @@ static void fstep_tick(const win_t *o) {
 }
 // A frame that keeps its slot is held 1 slot and the game steps 1 slot; when frames run late the hold steps up (60 → 30 → 20 fps at 60) and the game steps as many slots
 static nvn_fstep g_vs;   // present thread only
+static _Atomic int g_game_step_mode = -1;   // 0: steady, 1: realtime
+void dm_game_step_set(const char *val) {
+    int m = (val && !strcmp(val, "realtime")) ? 1 : 0;
+    atomic_store(&g_game_step_mode, m);
+    LOG("[nvn] game step mode changed live: %s", m == 1 ? "real time (dynamic delta time, no slow motion)" : "steady (fixed 33.3 ms step)");
+}
 static void vstep_tick(const win_t *o) {
     static uint64_t prev, held[FSTEP_MAX + 1]; static int nlog;
     const double v = 1e9 / dm_step_hz;
     uint64_t st = g_fs_start ? g_fs_start : now_ns(), pw = g_fs_wait; g_fs_start = g_fs_wait = 0;
-    double shown = prev ? (st - prev) / v : 0, gpu = 0; prev = st;
+    double shown = prev ? (st - prev) / v : 0, gpu = 0;
+    uint64_t elapsed_ns = (prev && st > prev) ? (st - prev) : (uint64_t)v;
+    prev = st;
     for (uint64_t f = g_frame; f-- > 0 && g_frame - f <= 8;) { double g = mtl_gpu_ms(f); if (g >= 0) { gpu = g * 1e6 / v; break; } }
     double cpu = shown - pw / v;
     // the game's own work for the last frame (present return to the next present: its code and submissions, not the pacing wait). The wait for the slot is taken in
@@ -1616,14 +1625,53 @@ static void vstep_tick(const win_t *o) {
     double cost = cpu > gpu ? cpu : gpu;
     // at most 2 slots: 30 fps is the floor, 60 when frames fit (a 3-slot hold, 20 fps, swung the picture between 20 and 60). The live target 30 holds every frame 2
     int k0 = g_vs.k, n = nvn_fstep_next(&g_vs, shown, cost, live_fps() == 30 ? 2 : 1, 2, 0);
-    // The game's step: the 60 FPS mod's (Fl4sh's pchtxt for Sword / Shield 1.3.2, loader.c fps_patch), and nothing else: the interval-2 entry of the game's
-    //   frame-time table holds one constant step, 1 / fps (16.67 ms; 33.33 ms while the live rate is 30), written when it changes; the rest of the table stays
-    //   the game's own. The world and its animations move by the same step every frame (a step that followed real time, v0.73, moved them by 1-2-3 slots:
-    //   the player's run swung between two poses, #190, and fast objects skipped collisions, #187). A phone that cannot hold the rate plays slower, as with the
-    //   mod. Presentation still holds frames 1 or 2 slots (above), so they are shown evenly
-    uint32_t ns = (uint32_t)((1000000000ull * (live_fps() == 30 && dm_step_hz == 60 ? 2 : 1) + (uint64_t)dm_step_hz - 1) / (uint64_t)dm_step_hz);
-    { static uint32_t last; if (ns != last) { dm_guest_write_prepare(dm_step_word, 4); __atomic_store_n((uint32_t *)dm_step_word, ns, __ATOMIC_RELAXED); last = ns;
-          LOG("[nvn] game step: %.2f ms a frame, as the 60 FPS mod", ns / 1e6); } }
+
+    int mode = atomic_load(&g_game_step_mode);
+    if (mode < 0) {
+        const char *e = getenv("DM_GAME_STEP");
+        mode = (e && !strcmp(e, "realtime")) ? 1 : 0;
+        atomic_store(&g_game_step_mode, mode);
+        LOG("[nvn] game step mode: %s", mode == 1 ? "real time (dynamic delta time, no slow motion)" : "steady (fixed 33.3 ms step)");
+    }
+
+    uint32_t ns;
+    if (mode == 1) {
+        static double s_smooth_ns = 33333334.0;
+        if (elapsed_ns > 100000000ull) elapsed_ns = 100000000ull;
+        if (elapsed_ns < 16666667ull) elapsed_ns = 16666667ull;
+        s_smooth_ns = s_smooth_ns * 0.75 + (double)elapsed_ns * 0.25;
+        uint64_t step_ns = (uint64_t)(s_smooth_ns + 0.5);
+        if (step_ns > 83333334ull) step_ns = 83333334ull;
+        if (step_ns < 16666667ull) step_ns = 16666667ull;
+        ns = (uint32_t)step_ns;
+
+        if (&dm_step_table && dm_step_table) {
+            dm_guest_write_prepare(dm_step_table, 40);
+            for (int i = 0; i < 5; i++) __atomic_store_n((uint64_t *)(dm_step_table + 8 * i), step_ns, __ATOMIC_RELAXED);
+        }
+        static uint32_t last_log_ms;
+        uint32_t cur_ms = (uint32_t)(step_ns / 1000000ull);
+        if (abs((int)cur_ms - (int)last_log_ms) >= 5 && nlog < 40) {
+            LOG("[nvn] game step: dynamic delta %.2f ms (%.1f effective game FPS, real time)", step_ns / 1e6, 1e9 / (double)step_ns);
+            last_log_ms = cur_ms;
+        }
+    } else {
+        ns = (uint32_t)((1000000000ull * (live_fps() == 30 && dm_step_hz == 60 ? 2 : 1) + (uint64_t)dm_step_hz - 1) / (uint64_t)dm_step_hz);
+        static const uint64_t own_table[5] = { 16666667, 33333334, 50000000, 66666667, 83333334 };
+        if (&dm_step_table && dm_step_table) {
+            dm_guest_write_prepare(dm_step_table, 40);
+            for (int i = 0; i < 5; i++) __atomic_store_n((uint64_t *)(dm_step_table + 8 * i), own_table[i], __ATOMIC_RELAXED);
+        }
+        static uint32_t last;
+        if (ns != last) {
+            LOG("[nvn] game step: %.2f ms a frame, as the 60 FPS mod", ns / 1e6);
+            last = ns;
+        }
+    }
+    if (&dm_step_word && dm_step_word) {
+        dm_guest_write_prepare(dm_step_word, 4);
+        __atomic_store_n((uint32_t *)dm_step_word, ns, __ATOMIC_RELAXED);
+    }
     atomic_store(&g_fs_k, g_vs.k); held[g_vs.k]++;
     if (k0 && g_vs.k != k0 && nlog < 40) LOG("[nvn] frame step: hold %d → %d slots of %.2f ms at present %llu (cost %.2f slots, GPU %.2f)%s", k0, g_vs.k, v / 1e6,
                                              (unsigned long long)o->presents, cost, gpu, ++nlog == 40 ? "; further changes not logged" : "");
