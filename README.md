@@ -38,6 +38,10 @@
 
 ## What's new
 
+- **Raid Battle Crash Fix & Memory Safety (v1.0.0-lowspec).** Added defensive buffer validation in `nn::fs::ReadFile` and enforced TV mode sub-heap allocation across both Sword and Shield titles, eliminating heap starvation and null-pointer crashes during Dynamax transformations and Max Raid battles.
+- **Freeze Stalls & Replay Queue Deadlock Elimination (v1.0.0-lowspec).** Replaced unbounded condition variable wait loops in `rq_push` and `rq_drain` with early-exit timeouts, reduced timeout latency, scaled pre-upload batch sizes on Adreno 6xx to 8 MB, and enabled 2-frame queue buffering to eliminate multi-second visual locks during asset-streaming bursts.
+- **Dedicated Log Storage (v1.0.0-lowspec).** All gameplay and crash logs are now automatically organized in `/storage/emulated/0/Documents/Galar Native/Logs/`, avoiding scoped storage renaming and permission locks.
+- **In-App Auto-Updater (v1.0.0-lowspec).** Check and install GitHub releases directly from the in-game About menu or automatically on launch via the system package installer.
 - **Real-Time Dynamic Game Speed (v0.99-lowspec).** Low-end SoCs (like Snapdragon 4 Gen 1 / Adreno 619) that run between 15 and 25 FPS no longer suffer from game slow-motion. Dynamic delta-time step pacing scales engine delta steps to preserve 1.0x real-time movement, battle animations, and music sync without altering game mechanics.
 - **Fast Scene Transitions & Staged Texture Burst (v0.99-lowspec).** Fixed long freezes when transitioning into battles, camping, and cooking curry. Pre-upload worker threads now burst-stage up to 32 textures per submission with single-fence synchronization, cutting multi-second loading stalls to ~30–60 ms.
 - **RomFS Mutex Decoupling & Sequential Readahead (v0.99-lowspec).** Path resolution mutex locks no longer hold through kernel file open/stat calls, preventing audio and asset streaming threads from contending during scene transitions. Added sequential kernel readahead for `.gfpak` archives.

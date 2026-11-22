@@ -554,21 +554,33 @@ static void *host_thread(void *a) {
     fprintf(stderr, "boot: dm_main returned %d\n", rc);
     return NULL;
 }
-// The log where the player can reach it: Android/data is out of reach of the phone's Files app on recent Android versions, Download is not. At each start the previous
-// run's log (the one that ended in a crash, if one did) goes to Download/<game>-log-previous.txt (PokemonShield-…); while playing, Download/<game>-log.txt is refreshed every
-// 5 seconds, with a memory line (a run the system ends for memory leaves no crash report, only memory that kept rising)
+// The log where the player can reach it: Documents/Galar Native/Logs is the dedicated folder, easily accessible
+// without scoping conflicts or MediaStore renaming. Falls back to Download if Documents is not writable.
+#define DOC_LOGS "/storage/emulated/0/Documents/Galar Native/Logs"
 #define DL "/storage/emulated/0/Download"
-// A name in Download this install may write. Android lets an app overwrite only files it created itself: after the game was uninstalled and installed again (or a file
+// A name in Documents/Galar Native/Logs (or Download) this install may write. Android lets an app overwrite only files it created itself: after the game was uninstalled and installed again (or a file
 //   came from another app), opening the old <game>-log.txt for writing fails, and the logs players attach stayed days old (#155). The first of <game>-<what>.txt,
 //   <game>-<what>-2.txt … -9.txt that opens for writing: this install's own file, or a new one
-static char g_dl_note[160];
+static char g_dl_note[320];
 static void dl_name(char *out, size_t n, const char *what) {
-    for (int k = 1; k <= 9; k++) {
-        if (k == 1) snprintf(out, n, DL "/%s-%s.txt", g_stem, what); else snprintf(out, n, DL "/%s-%s-%d.txt", g_stem, what, k);
-        int f = open(out, O_WRONLY | O_CREAT, 0644);
-        if (f >= 0) { close(f); if (k > 1) snprintf(g_dl_note, sizeof g_dl_note, "log: Download's %s-%s.txt belongs to an earlier install: written as %s", g_stem, what, out); return; }
+    mkdir("/storage/emulated/0/Documents", 0770);
+    mkdir("/storage/emulated/0/Documents/Galar Native", 0770);
+    mkdir(DOC_LOGS, 0770);
+    const char *dir = DL;
+    char probe[1200];
+    snprintf(probe, sizeof probe, DOC_LOGS "/.write-test");
+    int pfd = open(probe, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (pfd >= 0) {
+        close(pfd);
+        unlink(probe);
+        dir = DOC_LOGS;
     }
-    snprintf(out, n, DL "/%s-%s.txt", g_stem, what);
+    for (int k = 1; k <= 9; k++) {
+        if (k == 1) snprintf(out, n, "%s/%s-%s.txt", dir, g_stem, what); else snprintf(out, n, "%s/%s-%s-%d.txt", dir, g_stem, what, k);
+        int f = open(out, O_WRONLY | O_CREAT, 0644);
+        if (f >= 0) { close(f); if (k > 1) snprintf(g_dl_note, sizeof g_dl_note, "log: %s's %s-%s.txt belongs to an earlier install: written as %s", dir, g_stem, what, out); return; }
+    }
+    snprintf(out, n, "%s/%s-%s.txt", dir, g_stem, what);
 }
 static void copy_file(const char *a, const char *b) {
     int i = open(a, O_RDONLY), o = i < 0 ? -1 : open(b, O_WRONLY | O_CREAT | O_TRUNC, 0644); char buf[65536]; ssize_t n;
@@ -891,7 +903,7 @@ static void host_start(void) {
     //   0.50 = 960x540 (as lowest drew before). In handheld mode a Dynamax (the Poké Ball growing) crashed: the game's file loader got a null buffer from one of its
     //   own sub-heaps and unpacked an LZ4 entry into it (main+0x5dd7b8 alloc, no null check → main+0x1865410; #211 Adreno 613 on lowest, #115 Xclipse 530 on low,
     //   both "handheld set, TV flag 0"; no crash reported in TV mode). DM_OPMODE=0 in env.txt still gives handheld
-    { const char *g = getenv("DM_GRAPHICS"); int galar = !strcmp(DM_GAME_ID, "01008DB008C2C000");
+    { const char *g = getenv("DM_GRAPHICS"); int galar = !strcmp(DM_GAME_ID, "01008DB008C2C000") || !strcmp(DM_GAME_ID, "0100ABF008968000");
       if (g && (!strcmp(g, "low") || !strcmp(g, "lowest"))) setenv("DM_OPMODE", galar ? "1" : "0", 0); else if (g && (!strcmp(g, "high") || !strcmp(g, "auto"))) setenv("DM_OPMODE", "1", 0);
       if (g && !strcmp(g, "lowest")) setenv("DM_RES_CAP", galar ? "0.40" : "0.75", 0);
       else if (g && !strcmp(g, "low") && galar) setenv("DM_RES_CAP", "0.45", 0); }

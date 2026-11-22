@@ -1977,10 +1977,11 @@ static void *pre_main(void *unused) {
         if (avail > PRE_BATCH_MAX) avail = PRE_BATCH_MAX;
         unsigned n = 0;
         VkDeviceSize peek_bytes = 0;
+        VkDeviceSize max_batch = (g_props.vendorID == 0x5143 && g_props.deviceName[0] && (strstr(g_props.deviceName, "61") || strstr(g_props.deviceName, "62") || strstr(g_props.deviceName, "63"))) ? (8 * 1024 * 1024) : (24 * 1024 * 1024);
         tex_t batch[PRE_BATCH_MAX];
         while (n < avail) {
             tex_t *p = &g_pre[(g_pre_tail + n) % PRE_N];
-            if (n > 0 && peek_bytes + p->L.size > 24 * 1024 * 1024) break;
+            if (n > 0 && peek_bytes + p->L.size > max_batch) break;
             batch[n] = *p;
             peek_bytes += p->L.size;
             n++;

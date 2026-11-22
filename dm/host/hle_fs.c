@@ -504,7 +504,10 @@ HLE_FORCE("_ZN2nn2fs8OpenFileEPNS0_10FileHandleEPKci", "fsp-srv → open(2)", Re
 }
 _Atomic uint64_t dm_fs_read_bytes;   // bytes the game has read from its files (android_main.c: a burst of reads is a load)
 HLE_FORCE("_ZN2nn2fs8ReadFileEPmNS0_10FileHandleElPvm", "fsp-srv → pread(2)", Result, h_fs_ReadFile, size_t *out, uint64_t h, int64_t off, void *buf, size_t sz) {
-    if (!h) { *out = 0; return RES_FAIL; }   // a file handle is an fd; 0 is stdin and never a file the game opened: the null handle the game keeps using after a failed open
+    if (!out) return RES_FAIL;
+    *out = 0;
+    if (!h || !buf) return RES_FAIL;   // a file handle is an fd; 0 is stdin; null buffer check avoids EFAULT when guest sub-heap allocation fails
+    if (sz == 0) return RES_OK;
     size_t got = 0;
     dm_guest_write_prepare(buf, sz);   // The destination may be a texture pool page write-protected by the graphics layer: a kernel write to a read-only page returns EFAULT instead of page-faulting, so unprotect and mark dirty first
     while (got < sz) {
@@ -536,7 +539,7 @@ HLE_FORCE("_ZN2nn2fs8ReadFileEPmNS0_10FileHandleElPvm", "fsp-srv → pread(2)", 
     return RES_OK;
 }
 HLE_FORCE("_ZN2nn2fs9WriteFileENS0_10FileHandleElPKvmRKNS0_11WriteOptionE", "fsp-srv → pwrite(2)", Result, h_fs_WriteFile, uint64_t h, int64_t off, const void *buf, size_t sz, const void *opt) {
-    if (!h) return RES_FAIL;
+    if (!h || !buf) return RES_FAIL;
     (void)opt; size_t put = 0;
     if (g_fsave[(int)h & 0xffff]) {                                     // Save write injection point (for deterministic regression; only writes on the save mount are counted)
         static int cfg = -1, kill_n, fail_n, fail_e;

@@ -1081,11 +1081,13 @@ static const char *volatile g_rq_at = "idle";
 static _Atomic int g_rq_tid;
 int nvn_rq_tid(void) { return atomic_load(&g_rq_tid); }
 // A wait on the replay thread that takes this long has gone wrong: said in the log with who is waiting and what the replay thread is doing
-static void rq_wait(const char *who) {
-    struct timespec ts; clock_gettime(CLOCK_REALTIME, &ts); ts.tv_sec += 5;
+static int rq_wait(const char *who) {
+    struct timespec ts; clock_gettime(CLOCK_REALTIME, &ts); ts.tv_sec += 2;
     if (pthread_cond_timedwait(&g_rq_cv, &g_rq_mu, &ts) == ETIMEDOUT) {
-        static int n; if (n++ < 20) LOG("[RED] %s has waited 5 s on the replay thread: it is at %s, queue %llu..%llu, %d presents, caller lr %p", who, g_rq_at, (unsigned long long)g_rq_tail, (unsigned long long)g_rq_head, g_rq_presents, __builtin_return_address(0));
+        static int n; if (n++ < 20) LOG("[RED] %s has waited 2 s on the replay thread: it is at %s, queue %llu..%llu, %d presents, caller lr %p", who, g_rq_at, (unsigned long long)g_rq_tail, (unsigned long long)g_rq_head, g_rq_presents, __builtin_return_address(0));
+        return 1;
     }
+    return 0;
 }
 static void *rq_main(void *a) {
     (void)a;
@@ -1112,17 +1114,17 @@ static void rq_push(rq_item it) {
     static int started;
     pthread_mutex_lock(&g_rq_mu);
     if (!started) { started = 1; pthread_attr_t at; pthread_attr_init(&at); pthread_attr_setstacksize(&at, 16u << 20); pthread_t t; if (pthread_create(&t, &at, rq_main, NULL)) die("replay thread"); pthread_detach(t); }
-    while (g_rq_head - g_rq_tail >= RQ_N) rq_wait("a full queue");
+    while (g_rq_head - g_rq_tail >= RQ_N) if (rq_wait("a full queue")) break;
     g_rq[g_rq_head++ % RQ_N] = it; if (it.kind == RQ_PRESENT) g_rq_presents++;
     pthread_cond_broadcast(&g_rq_cv);
-    if (it.kind == RQ_PRESENT) while (g_rq_presents > 1) rq_wait("the next present");
+    if (it.kind == RQ_PRESENT) while (g_rq_presents > 2) if (rq_wait("the next present")) break;
     pthread_mutex_unlock(&g_rq_mu);
 }
 int nvn_async_on(void) { return rq_on(); }
 void rq_drain(void) {
     if (!rq_on()) return;
     pthread_mutex_lock(&g_rq_mu); uint64_t want = g_rq_head;
-    while (g_rq_tail < want) rq_wait("a drain");
+    while (g_rq_tail < want) if (rq_wait("a drain")) break;
     pthread_mutex_unlock(&g_rq_mu);
 }
 void sync_fence_now(sync_t *s) {   // this sync is signalled by what has been submitted so far: known once the queue has reached this point (UINT64_MAX until then: not signalled)

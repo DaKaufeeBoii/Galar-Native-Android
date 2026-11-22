@@ -552,6 +552,9 @@ public final class GameMenu {
         TextView link = text(a, t(a, "Official downloads: %s", dl), 13, accent(a), false); link.setPadding(0, dp(a, 6), 0, 0);
         link.setOnClickListener(v -> { try { a.startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(dl))); } catch (Exception e) { } });
         c.addView(link);
+        TextView updateBtn = text(a, t(a, "Check for Updates"), 13, accent(a), true); updateBtn.setPadding(0, dp(a, 8), 0, 0);
+        updateBtn.setOnClickListener(v -> AppUpdater.check(a, false));
+        c.addView(updateBtn);
         // the credits: the copyright lines of the app's licence, then the licence itself
         String own = asset(a, "licenses/LICENSE.txt"); StringBuilder who = new StringBuilder();
         for (String l : own.split("\n")) { String s_ = l.trim();   // (not the GPL text's own copyright line, and each holder once: NOTICE and LICENSE-MIT both name them)
