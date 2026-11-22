@@ -98,7 +98,7 @@ void dm_backtrace(uint64_t fp) {
 // ---------- Page fault hooks (write-protect dirty page tracking) ----------
 // Called in registration order before on_crash prints the crash state; returning 1 = handled (return directly and re-execute the faulting instruction); the crash path is taken only when all return 0.
 // Hooks run in signal handler context: only table lookups / atomic operations / mprotect are allowed, no memory allocation and no locking.
-#define MAX_FAULT_HOOK 4
+#define MAX_FAULT_HOOK 8
 static int (*g_fault_hook[MAX_FAULT_HOOK])(void *addr, int is_write, void *uc);
 static void (*g_write_prep[MAX_FAULT_HOOK])(void *addr, size_t len);
 static int g_nfault_hook, g_nwrite_prep;
@@ -106,6 +106,41 @@ void dm_fault_hook_register(int (*fn)(void *addr, int is_write, void *uc)) {
     if (g_nfault_hook >= MAX_FAULT_HOOK) die("too many page fault hooks");
     g_fault_hook[g_nfault_hook++] = fn;
 }
+
+#if defined(__aarch64__) || defined(__arm64__)
+#define VFX_RESCUE_SLOTS 4
+#define VFX_RESCUE_SIZE  (16 * 1024 * 1024)
+static uint8_t s_vfx_rescue_pool[VFX_RESCUE_SLOTS][VFX_RESCUE_SIZE] __attribute__((aligned(4096)));
+static _Atomic int s_vfx_rescue_idx;
+
+static int vfx_null_rescue_hook(void *addr, int is_write, void *uc_) {
+    if ((uintptr_t)addr >= 0x1000 || !is_write) return 0;
+    ucontext_t *uc = (ucontext_t *)uc_;
+    uint64_t pc = (uint64_t)DM_UC_SS(uc).__pc;
+    module_t *m = module_of((void *)pc);
+    if (!m || strcmp(m->name, "main") != 0) return 0;
+
+    uint64_t rel_pc = pc - (uint64_t)m->base;
+    // Decompressor loop in Shield 1.3.2 (0x1865410..0x1865550) and Sword 1.3.2 (0x1865370..0x18654c0)
+    // where x20 is the destination buffer pointer.
+    if (rel_pc >= 0x1865300 && rel_pc <= 0x1865600 && DM_UC_SS(uc).__x[20] == 0) {
+        int slot = atomic_fetch_add(&s_vfx_rescue_idx, 1) % VFX_RESCUE_SLOTS;
+        uint8_t *rescue = s_vfx_rescue_pool[slot];
+        DM_UC_SS(uc).__x[20] = (uint64_t)rescue;
+
+        uint64_t fp = (uint64_t)DM_UC_SS(uc).__fp;
+        if (fp >= 0x1000 && (fp & 7) == 0) {
+            uint64_t *saved_x20 = (uint64_t *)(fp - 8);
+            if (*saved_x20 == 0) *saved_x20 = (uint64_t)rescue;
+        }
+
+        fprintf(stderr, "[dm] RESCUED: NULL destination buffer at main+%#llx (redirected x20 to 16MB emergency buffer slot %d)\n",
+                (unsigned long long)rel_pc, slot);
+        return 1;
+    }
+    return 0;
+}
+#endif
 static void (*g_res_report)(uint32_t tick, const char *why);   // Resource count callback (registered by the graphics layer, called by diag.c per tick / event)
 void dm_res_report_register(void (*fn)(uint32_t tick, const char *why)) { g_res_report = fn; }
 void (*dm_res_report_cb(void))(uint32_t, const char *) { return g_res_report; }
@@ -213,6 +248,9 @@ void crash_thread_init(void) {
 }
 void crash_install(void) {
     crash_thread_init();
+#if defined(__aarch64__) || defined(__arm64__)
+    dm_fault_hook_register(vfx_null_rescue_hook);
+#endif
     struct sigaction sa = {.sa_sigaction = on_crash, .sa_flags = SA_SIGINFO | SA_ONSTACK};
     sigaction(SIGALRM, &sa, 0);
     // Both watchdogs are turned on only when a test explicitly sets DM_WATCH / DM_WATCH_STALL: the product (the player launches from the desktop, no environment variables) turns on neither.
