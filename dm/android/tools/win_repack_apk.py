@@ -66,7 +66,7 @@ def main():
         sys.exit(1)
     print("classes.dex built successfully.")
 
-    print("\n=== Step 2.5: Generating AndroidManifest.xml (Version 1.0.0) ===")
+    print("\n=== Step 2.5: Generating AndroidManifest.xml (Version 1.0.1) ===")
     AAPT2_EXE = os.path.join(BUILD_TOOLS, "aapt2.exe")
     build_dir = os.path.join(ROOT_DIR, "dm", "android", "app", "build")
     res_dir = os.path.join(build_dir, "res")
@@ -79,7 +79,7 @@ def main():
                 z.extract(name, build_dir)
 
     manifest_xml = '''<?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.nxnative.pokemonshield" android:versionCode="100" android:versionName="1.0.0">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.nxnative.pokemonshield" android:versionCode="101" android:versionName="1.0.1">
     <uses-sdk android:minSdkVersion="31" android:targetSdkVersion="35" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.INTERNET" />
