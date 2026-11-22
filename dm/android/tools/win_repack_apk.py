@@ -123,21 +123,24 @@ def main():
     aligned_apk = os.path.join(ROOT_DIR, "GalarNative-aligned.apk")
     final_apk = os.path.join(ROOT_DIR, "GalarNative-Optimized.apk")
 
-    # Read base apk and write to temp apk with updated files
+    # Read base apk and write to temp apk with updated files in standard Android order:
+    # AndroidManifest.xml (compressed, 1st), resources.arsc (STORED uncompressed, 2nd)
     with zipfile.ZipFile(base_apk, "r") as zin:
-        with zipfile.ZipFile(temp_apk, "w", compression=zipfile.ZIP_DEFLATED) as zout:
+        with zipfile.ZipFile(temp_apk, "w") as zout:
+            print("Writing new AndroidManifest.xml (Version 1.0.0)...")
+            zout.writestr("AndroidManifest.xml", new_manifest_bytes, compress_type=zipfile.ZIP_DEFLATED)
+            print("Writing new resources.arsc (uncompressed / STORED)...")
+            zout.writestr("resources.arsc", new_resources_arsc, compress_type=zipfile.ZIP_STORED)
+
             for item in zin.infolist():
                 if item.filename in ["classes.dex", "lib/arm64-v8a/libnxnative.so", "AndroidManifest.xml", "resources.arsc"] or item.filename.startswith("META-INF/"):
                     continue
                 zout.writestr(item, zin.read(item.filename))
-            print("Writing new AndroidManifest.xml (Version 1.0.0)...")
-            zout.writestr("AndroidManifest.xml", new_manifest_bytes)
-            print("Writing new resources.arsc...")
-            zout.writestr("resources.arsc", new_resources_arsc)
+
             print("Writing new classes.dex...")
-            zout.write(dex_path, "classes.dex")
+            zout.write(dex_path, "classes.dex", compress_type=zipfile.ZIP_DEFLATED)
             print("Writing new libnxnative.so...")
-            zout.write(SO_PATH, "lib/arm64-v8a/libnxnative.so")
+            zout.write(SO_PATH, "lib/arm64-v8a/libnxnative.so", compress_type=zipfile.ZIP_DEFLATED)
 
     print("\n=== Step 4: Aligning APK ===")
     if os.path.exists(aligned_apk):
@@ -145,15 +148,15 @@ def main():
     run(f'"{ZIPALIGN_EXE}" -p -f 4 "{temp_apk}" "{aligned_apk}"')
     os.remove(temp_apk)
 
-    print("\n=== Step 5: Signing APK ===")
+    print("\n=== Step 5: Signing APK (v1, v2, v3 schemes) ===")
     if os.path.exists(final_apk):
         os.remove(final_apk)
-    run(f'"{APKSIGNER_BAT}" sign --ks "{KEYSTORE}" --ks-pass pass:android --key-pass pass:android --out "{final_apk}" "{aligned_apk}"')
+    run(f'"{APKSIGNER_BAT}" sign --ks "{KEYSTORE}" --ks-pass pass:android --key-pass pass:android --min-sdk-version 24 --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled true --out "{final_apk}" "{aligned_apk}"')
     if os.path.exists(aligned_apk):
         os.remove(aligned_apk)
 
     print("\n=== Step 6: Verifying APK ===")
-    run(f'"{APKSIGNER_BAT}" verify --verbose "{final_apk}"')
+    run(f'"{APKSIGNER_BAT}" verify --verbose --min-sdk-version 24 "{final_apk}"')
     print(f"\nSUCCESS! {final_apk} is built, aligned, signed and verified!")
 
 if __name__ == "__main__":
