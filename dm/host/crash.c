@@ -108,24 +108,76 @@ void dm_fault_hook_register(int (*fn)(void *addr, int is_write, void *uc)) {
 }
 
 #if defined(__aarch64__) || defined(__arm64__)
-#define VFX_RESCUE_SLOTS 4
+#define VFX_RESCUE_SLOTS 8
 #define VFX_RESCUE_SIZE  (16 * 1024 * 1024)
 static uint8_t s_vfx_rescue_pool[VFX_RESCUE_SLOTS][VFX_RESCUE_SIZE] __attribute__((aligned(4096)));
 static _Atomic int s_vfx_rescue_idx;
+static _Atomic(uint8_t *) s_last_vfx_buf;
+static __thread uint8_t *t_last_vfx_buf;
+
+static __thread uint64_t tl_last_fault_pc;
+static __thread int tl_fault_repeats;
 
 static int vfx_null_rescue_hook(void *addr, int is_write, void *uc_) {
-    if ((uintptr_t)addr >= 0x1000 || !is_write) return 0;
+    // Only intercept NULL or near-NULL dereferences (< 4KB, illegal page 0)
+    if ((uintptr_t)addr >= 0x1000) return 0;
+
     ucontext_t *uc = (ucontext_t *)uc_;
     uint64_t pc = (uint64_t)DM_UC_SS(uc).__pc;
+    uint64_t lr = (uint64_t)DM_UC_SS(uc).__lr;
     module_t *m = module_of((void *)pc);
-    if (!m || strcmp(m->name, "main") != 0) return 0;
+    module_t *m_lr = module_of((void *)lr);
 
-    uint64_t rel_pc = pc - (uint64_t)m->base;
-    // Decompressor loop in Shield 1.3.2 (0x1865410..0x1865550) and Sword 1.3.2 (0x1865370..0x18654c0)
-    // where x20 is the destination buffer pointer.
-    if (rel_pc >= 0x1865300 && rel_pc <= 0x1865600 && DM_UC_SS(uc).__x[20] == 0) {
+    // Only rescue faults originating from or returning to guest modules (main, sdk, subsdk0, subsdk1)
+    if (!m && !m_lr) return 0;
+
+    uint64_t rel_pc = m ? (pc - (uint64_t)m->base) : 0;
+    uint64_t rel_lr = m_lr ? (lr - (uint64_t)m_lr->base) : 0;
+
+    // Track repeating faults at the same PC to prevent infinite signal loops
+    if (pc == tl_last_fault_pc) {
+        tl_fault_repeats++;
+    } else {
+        tl_last_fault_pc = pc;
+        tl_fault_repeats = 0;
+    }
+
+    uint8_t *rescue = t_last_vfx_buf ? t_last_vfx_buf : atomic_load(&s_last_vfx_buf);
+    if (!rescue) {
         int slot = atomic_fetch_add(&s_vfx_rescue_idx, 1) % VFX_RESCUE_SLOTS;
-        uint8_t *rescue = s_vfx_rescue_pool[slot];
+        rescue = s_vfx_rescue_pool[slot];
+        t_last_vfx_buf = rescue;
+        atomic_store(&s_last_vfx_buf, rescue);
+    }
+
+    // -------------------------------------------------------------
+    // Guard: If the same instruction faulted 2+ times, setting registers
+    // didn't satisfy it. Safely complete the call by returning to lr!
+    // -------------------------------------------------------------
+    if (tl_fault_repeats >= 2) {
+        if (lr >= 0x1000) {
+            fprintf(stderr, "[dm] RESCUED: Bypassing unrecoverable call at pc=%s+%#llx (repeats=%d) -> returning to lr=%s+%#llx\n",
+                    m ? m->name : "host", (unsigned long long)rel_pc,
+                    tl_fault_repeats,
+                    m_lr ? m_lr->name : "host", (unsigned long long)rel_lr);
+            DM_UC_SS(uc).__pc = lr;
+            DM_UC_SS(uc).__x[0] = (uint64_t)rescue;
+            tl_fault_repeats = 0;
+            return 1;
+        }
+        return 0; // cannot bypass if lr is invalid
+    }
+
+    // -------------------------------------------------------------
+    // Case 1: LZ4 Decompressor write loop in main (Shield & Sword)
+    // Destination pointer is x20
+    // -------------------------------------------------------------
+    if (m && !strcmp(m->name, "main") && rel_pc >= 0x1865300 && rel_pc <= 0x1865600 && DM_UC_SS(uc).__x[20] == 0) {
+        int slot = atomic_fetch_add(&s_vfx_rescue_idx, 1) % VFX_RESCUE_SLOTS;
+        rescue = s_vfx_rescue_pool[slot];
+        t_last_vfx_buf = rescue;
+        atomic_store(&s_last_vfx_buf, rescue);
+
         DM_UC_SS(uc).__x[20] = (uint64_t)rescue;
 
         uint64_t fp = (uint64_t)DM_UC_SS(uc).__fp;
@@ -138,6 +190,45 @@ static int vfx_null_rescue_hook(void *addr, int is_write, void *uc_) {
                 (unsigned long long)rel_pc, slot);
         return 1;
     }
+
+    // -------------------------------------------------------------
+    // Case 2: Post-decompression or Asset Initialization / Read / Write
+    // Intercepts any read or write through NULL in guest modules
+    // -------------------------------------------------------------
+    int redirected = 0;
+    if (DM_UC_SS(uc).__x[0] == 0) {
+        DM_UC_SS(uc).__x[0] = (uint64_t)rescue;
+        redirected = 1;
+    }
+    if (DM_UC_SS(uc).__x[19] == 0) {
+        DM_UC_SS(uc).__x[19] = (uint64_t)rescue;
+        redirected = 1;
+    }
+    if (DM_UC_SS(uc).__x[20] == 0) {
+        DM_UC_SS(uc).__x[20] = (uint64_t)rescue;
+        redirected = 1;
+    }
+
+    // Check if another register x1..x7 or x21..x28 is NULL and being dereferenced
+    for (int i = 1; i < 29; i++) {
+        if (DM_UC_SS(uc).__x[i] == 0 && (uintptr_t)addr < 0x1000) {
+            if (i <= 7 || i >= 19) {
+                DM_UC_SS(uc).__x[i] = (uint64_t)rescue;
+                redirected = 1;
+                break;
+            }
+        }
+    }
+
+    if (redirected) {
+        fprintf(stderr, "[dm] RESCUED: NULL deref addr=%#llx (%s) at pc=%s+%#llx lr=%s+%#llx (redirected to emergency buffer)\n",
+                (unsigned long long)(uintptr_t)addr,
+                is_write ? "write" : "read",
+                m ? m->name : "host", (unsigned long long)rel_pc,
+                m_lr ? m_lr->name : "host", (unsigned long long)rel_lr);
+        return 1;
+    }
+
     return 0;
 }
 #endif
