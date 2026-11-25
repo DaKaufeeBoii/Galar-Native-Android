@@ -128,8 +128,30 @@ static int vfx_null_rescue_hook(void *addr, int is_write, void *uc_) {
     module_t *m = module_of((void *)pc);
     module_t *m_lr = module_of((void *)lr);
 
-    // Only rescue faults originating from or returning to guest modules (main, sdk, subsdk0, subsdk1)
-    if (!m && !m_lr) return 0;
+    uint8_t *rescue = t_last_vfx_buf ? t_last_vfx_buf : atomic_load(&s_last_vfx_buf);
+    if (!rescue) {
+        int slot = atomic_fetch_add(&s_vfx_rescue_idx, 1) % VFX_RESCUE_SLOTS;
+        rescue = s_vfx_rescue_pool[slot];
+        t_last_vfx_buf = rescue;
+        atomic_store(&s_last_vfx_buf, rescue);
+    }
+
+    // If fault occurred in host code, check if invoked from guest
+    if (!m && !m_lr) {
+        uint64_t fp = (uint64_t)DM_UC_SS(uc).__fp;
+        uint64_t ra[16]; int n = frame_walk(fp, ra, 16);
+        for (int i = 0; i < n; i++) {
+            module_t *gm = module_of((void *)ra[i]);
+            if (gm) {
+                fprintf(stderr, "[dm] RESCUED: NULL deref in host pc=%#llx called from guest %s+%#llx (returning to guest)\n",
+                        (unsigned long long)pc, gm->name, (unsigned long long)(ra[i] - (uint64_t)gm->base));
+                DM_UC_SS(uc).__pc = ra[i];
+                DM_UC_SS(uc).__x[0] = (uint64_t)rescue;
+                return 1;
+            }
+        }
+        return 0;
+    }
 
     uint64_t rel_pc = m ? (pc - (uint64_t)m->base) : 0;
     uint64_t rel_lr = m_lr ? (lr - (uint64_t)m_lr->base) : 0;
@@ -142,19 +164,11 @@ static int vfx_null_rescue_hook(void *addr, int is_write, void *uc_) {
         tl_fault_repeats = 0;
     }
 
-    uint8_t *rescue = t_last_vfx_buf ? t_last_vfx_buf : atomic_load(&s_last_vfx_buf);
-    if (!rescue) {
-        int slot = atomic_fetch_add(&s_vfx_rescue_idx, 1) % VFX_RESCUE_SLOTS;
-        rescue = s_vfx_rescue_pool[slot];
-        t_last_vfx_buf = rescue;
-        atomic_store(&s_last_vfx_buf, rescue);
-    }
-
     // -------------------------------------------------------------
-    // Guard: If the same instruction faulted 2+ times, setting registers
+    // Guard: If the same instruction faulted again, setting registers
     // didn't satisfy it. Safely complete the call by returning to lr!
     // -------------------------------------------------------------
-    if (tl_fault_repeats >= 2) {
+    if (tl_fault_repeats >= 1) {
         if (lr >= 0x1000) {
             fprintf(stderr, "[dm] RESCUED: Bypassing unrecoverable call at pc=%s+%#llx (repeats=%d) -> returning to lr=%s+%#llx\n",
                     m ? m->name : "host", (unsigned long long)rel_pc,
@@ -193,35 +207,21 @@ static int vfx_null_rescue_hook(void *addr, int is_write, void *uc_) {
 
     // -------------------------------------------------------------
     // Case 2: Post-decompression or Asset Initialization / Read / Write
-    // Intercepts any read or write through NULL in guest modules
+    // Intercepts any read or write through near-NULL in guest modules.
+    // Relocates any register whose value is in Page 0 (< 0x1000)
+    // to point into the rescue buffer, preserving any offset.
     // -------------------------------------------------------------
     int redirected = 0;
-    if (DM_UC_SS(uc).__x[0] == 0) {
-        DM_UC_SS(uc).__x[0] = (uint64_t)rescue;
-        redirected = 1;
-    }
-    if (DM_UC_SS(uc).__x[19] == 0) {
-        DM_UC_SS(uc).__x[19] = (uint64_t)rescue;
-        redirected = 1;
-    }
-    if (DM_UC_SS(uc).__x[20] == 0) {
-        DM_UC_SS(uc).__x[20] = (uint64_t)rescue;
-        redirected = 1;
-    }
-
-    // Check if another register x1..x7 or x21..x28 is NULL and being dereferenced
-    for (int i = 1; i < 29; i++) {
-        if (DM_UC_SS(uc).__x[i] == 0 && (uintptr_t)addr < 0x1000) {
-            if (i <= 7 || i >= 19) {
-                DM_UC_SS(uc).__x[i] = (uint64_t)rescue;
-                redirected = 1;
-                break;
-            }
+    for (int i = 0; i < 29; i++) {
+        uint64_t val = DM_UC_SS(uc).__x[i];
+        if (val < 0x1000) {
+            DM_UC_SS(uc).__x[i] = (uint64_t)rescue + val;
+            redirected = 1;
         }
     }
 
     if (redirected) {
-        fprintf(stderr, "[dm] RESCUED: NULL deref addr=%#llx (%s) at pc=%s+%#llx lr=%s+%#llx (redirected to emergency buffer)\n",
+        fprintf(stderr, "[dm] RESCUED: NULL deref addr=%#llx (%s) at pc=%s+%#llx lr=%s+%#llx (redirected registers to emergency buffer)\n",
                 (unsigned long long)(uintptr_t)addr,
                 is_write ? "write" : "read",
                 m ? m->name : "host", (unsigned long long)rel_pc,

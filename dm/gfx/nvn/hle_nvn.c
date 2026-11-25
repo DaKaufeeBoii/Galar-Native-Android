@@ -1827,31 +1827,65 @@ typedef struct { NVNdevice *dev; const pool_t *pool; int64_t off; uint64_t size;
 typedef struct { uint32_t magic; const pool_t *pool; int64_t off; uint64_t size; } buf_t;             FITS(buf_t, NVNbuffer);
 #define BB(b) ((buf_builder_t *)(b))
 #define BF(b) ((const buf_t *)(b))
-NVN(nvnBufferBuilderSetDefaults, void, NVNbufferBuilder *b) { NVNdevice *d = BB(b)->dev; memset(b, 0, sizeof(buf_builder_t)); BB(b)->dev = d; }
-NVN(nvnBufferBuilderSetDevice, void, NVNbufferBuilder *b, NVNdevice *d) { BB(b)->dev = d; }
-NVN(nvnBufferBuilderSetStorage, void, NVNbufferBuilder *b, NVNmemoryPool *p, ptrdiff_t off, size_t n) { BB(b)->pool = (const pool_t *)p; BB(b)->off = off; BB(b)->size = n; }
+
+static uint8_t s_nvn_fallback_buffer[16 * 1024 * 1024] __attribute__((aligned(4096)));
+static const pool_t s_nvn_fallback_pool = {
+    .magic = MAGIC('P', 'O', 'O', 'L'),
+    .flags = 0,
+    .mem = s_nvn_fallback_buffer,
+    .size = sizeof(s_nvn_fallback_buffer)
+};
+
+NVN(nvnBufferBuilderSetDefaults, void, NVNbufferBuilder *b) { if (!b) return; NVNdevice *d = BB(b)->dev; memset(b, 0, sizeof(buf_builder_t)); BB(b)->dev = d; }
+NVN(nvnBufferBuilderSetDevice, void, NVNbufferBuilder *b, NVNdevice *d) { if (!b) return; BB(b)->dev = d; }
+NVN(nvnBufferBuilderSetStorage, void, NVNbufferBuilder *b, NVNmemoryPool *p, ptrdiff_t off, size_t n) { if (!b) return; BB(b)->pool = (const pool_t *)p; BB(b)->off = off; BB(b)->size = n; }
 NVN(nvnBufferInitialize, NVNboolean, NVNbuffer *buf, const NVNbufferBuilder *b) {
+    if (!buf) return 0;
     const buf_builder_t *bb = (const buf_builder_t *)b;
-    if (!bb->pool || !bb->pool->mem) { LOG("[RED] BufferInitialize: pool has no storage (pool %p flags %#x offset %#llx size %#llx)", (const void *)bb->pool, bb->pool ? bb->pool->flags : 0, (unsigned long long)bb->off, (unsigned long long)bb->size); return 0; }
-    if ((uint64_t)bb->off + bb->size > bb->pool->size) LOG("[RED] BufferInitialize: past the end of the pool (offset %#llx size %#llx pool %#llx)", (unsigned long long)bb->off, (unsigned long long)bb->size, (unsigned long long)bb->pool->size);
-    *(buf_t *)buf = (buf_t){MAGIC('B', 'U', 'F', 0), bb->pool, bb->off, bb->size};
-    OLOG("BufferInitialize %p pool=%p off=%#llx size=%#llx", (void *)buf, (const void *)bb->pool, (unsigned long long)bb->off, (unsigned long long)bb->size);
+    const pool_t *pool = (bb && bb->pool && bb->pool->mem) ? bb->pool : &s_nvn_fallback_pool;
+    int64_t off = bb ? bb->off : 0;
+    uint64_t size = bb ? bb->size : sizeof(s_nvn_fallback_buffer);
+    if (!bb || !bb->pool || !bb->pool->mem) {
+        LOG("[dm] RESCUED: BufferInitialize with NULL pool (redirected to 16MB NVN fallback pool)");
+    } else if ((uint64_t)off + size > pool->size) {
+        LOG("[RED] BufferInitialize: past the end of the pool (offset %#llx size %#llx pool %#llx)", (unsigned long long)off, (unsigned long long)size, (unsigned long long)pool->size);
+    }
+    *(buf_t *)buf = (buf_t){MAGIC('B', 'U', 'F', 0), pool, off, size};
+    OLOG("BufferInitialize %p pool=%p off=%#llx size=%#llx", (void *)buf, (const void *)pool, (unsigned long long)off, (unsigned long long)size);
     return 1;
 }
-NVN(nvnBufferFinalize, void, NVNbuffer *buf) { ((buf_t *)buf)->magic = 0; }
+NVN(nvnBufferFinalize, void, NVNbuffer *buf) { if (buf) ((buf_t *)buf)->magic = 0; }
 NVN(nvnBufferSetDebugLabel, void, NVNbuffer *buf, const char *s) { (void)buf; (void)s; }
-NVN(nvnBufferGetAddress, NVNbufferAddress, const NVNbuffer *buf) { return (NVNbufferAddress)(BF(buf)->pool->mem + BF(buf)->off); }
-NVN(nvnBufferMap, void *, const NVNbuffer *buf) { return BF(buf)->pool->mem + BF(buf)->off; }
-NVN(nvnBufferGetSize, size_t, const NVNbuffer *buf) { return (size_t)BF(buf)->size; }
-NVN(nvnBufferGetMemoryPool, NVNmemoryPool *, const NVNbuffer *buf) { return (NVNmemoryPool *)BF(buf)->pool; }
-NVN(nvnBufferGetMemoryOffset, ptrdiff_t, const NVNbuffer *buf) { return (ptrdiff_t)BF(buf)->off; }
+NVN(nvnBufferGetAddress, NVNbufferAddress, const NVNbuffer *buf) {
+    if (!buf || !BF(buf)->pool || !BF(buf)->pool->mem) return (NVNbufferAddress)s_nvn_fallback_buffer;
+    return (NVNbufferAddress)(BF(buf)->pool->mem + BF(buf)->off);
+}
+NVN(nvnBufferMap, void *, const NVNbuffer *buf) {
+    if (!buf || !BF(buf)->pool || !BF(buf)->pool->mem) {
+        LOG("[dm] RESCUED: nvnBufferMap with NULL buffer/pool (returning 16MB NVN fallback buffer)");
+        return s_nvn_fallback_buffer;
+    }
+    return BF(buf)->pool->mem + BF(buf)->off;
+}
+NVN(nvnBufferGetSize, size_t, const NVNbuffer *buf) {
+    if (!buf || !BF(buf)->pool) return sizeof(s_nvn_fallback_buffer);
+    return (size_t)BF(buf)->size;
+}
+NVN(nvnBufferGetMemoryPool, NVNmemoryPool *, const NVNbuffer *buf) {
+    if (!buf || !BF(buf)->pool) return (NVNmemoryPool *)&s_nvn_fallback_pool;
+    return (NVNmemoryPool *)BF(buf)->pool;
+}
+NVN(nvnBufferGetMemoryOffset, ptrdiff_t, const NVNbuffer *buf) {
+    if (!buf) return 0;
+    return (ptrdiff_t)BF(buf)->off;
+}
 NVN(nvnBufferFlushMappedRange, void, const NVNbuffer *buf, ptrdiff_t off, size_t n) { (void)buf; (void)off; (void)n; }        // unified memory: nothing to flush
 NVN(nvnBufferInvalidateMappedRange, void, const NVNbuffer *buf, ptrdiff_t off, size_t n) { (void)buf; (void)off; (void)n; }
 
 // Memory pool queries
-NVN(nvnMemoryPoolGetFlags, NVNmemoryPoolFlags, const NVNmemoryPool *p) { return (NVNmemoryPoolFlags)((const pool_t *)p)->flags; }
-NVN(nvnMemoryPoolMap, void *, const NVNmemoryPool *p) { return ((const pool_t *)p)->mem; }
-NVN(nvnMemoryPoolGetSize, size_t, const NVNmemoryPool *p) { return (size_t)((const pool_t *)p)->size; }
+NVN(nvnMemoryPoolGetFlags, NVNmemoryPoolFlags, const NVNmemoryPool *p) { return p ? (NVNmemoryPoolFlags)((const pool_t *)p)->flags : 0; }
+NVN(nvnMemoryPoolMap, void *, const NVNmemoryPool *p) { return (p && ((const pool_t *)p)->mem) ? ((const pool_t *)p)->mem : s_nvn_fallback_buffer; }
+NVN(nvnMemoryPoolGetSize, size_t, const NVNmemoryPool *p) { return p ? (size_t)((const pool_t *)p)->size : sizeof(s_nvn_fallback_buffer); }
 NVN(nvnMemoryPoolInvalidateMappedRange, void, const NVNmemoryPool *p, ptrdiff_t off, size_t n) { (void)p; (void)off; (void)n; }
 NVN(nvnMemoryPoolSetDebugLabel, void, NVNmemoryPool *p, const char *s) { (void)p; (void)s; }
 // Debug labels: only for NVN debugging tools, unused by the host
