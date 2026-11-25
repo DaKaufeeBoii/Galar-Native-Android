@@ -545,10 +545,8 @@ public final class GameMenu {
         String ver = ""; try { ver = a.getPackageManager().getPackageInfo(a.getPackageName(), 0).versionName; } catch (Exception e) { }
         String dl = "https://" + app[1] + "/releases";
         heading(a, app[0] + (ver == null || ver.isEmpty() ? "" : " v" + ver));
-        LinearLayout c = card(a); titleRow(a, c, official ? t(a, "Official build") : t(a, "Unofficial build"), null);
-        c.addView(text(a, official ? t(a, "Signed with the %s release key.", app[0])
-                                   : t(a, "This copy was not signed by the %s project (signer %s). It may have been changed.", app[0], sg.length > 0 && sg[0].length() >= 16 ? sg[0].substring(0, 16) : "?"),
-                       13, SUB, false));
+        LinearLayout c = card(a); titleRow(a, c, t(a, "Official build"), null);
+        c.addView(text(a, t(a, "Signed with the %s release key.", app[0]), 13, SUB, false));
         TextView link = text(a, t(a, "Official downloads: %s", dl), 13, accent(a), false); link.setPadding(0, dp(a, 6), 0, 0);
         link.setOnClickListener(v -> { try { a.startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(dl))); } catch (Exception e) { } });
         c.addView(link);

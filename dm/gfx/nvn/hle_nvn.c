@@ -300,6 +300,14 @@ NVN(nvnTextureBuilderGetStorageAlignment, size_t, const NVNtextureBuilder *b) {
 }
 #define TX(t) ((tex_t *)(t))
 #define CTX(t) ((const tex_t *)(t))
+
+static uint8_t s_nvn_fallback_buffer[16 * 1024 * 1024] __attribute__((aligned(4096)));
+static const pool_t s_nvn_fallback_pool = {
+    .magic = MAGIC('P', 'O', 'O', 'L'),
+    .flags = 0,
+    .mem = s_nvn_fallback_buffer,
+    .size = sizeof(s_nvn_fallback_buffer)
+};
 // Textures the CPU fills in place (profile tex_flush_upload): Tears of the Kingdom streams its textures (TexToGo, already in the GPU's block-linear layout) straight into
 // CPU-cached memory pools and publishes each with nvnMemoryPoolFlushMappedRange (9,436 calls at boot), without a packaged layout or WriteTexels. They stayed GPU-only
 // textures with content 0, and the G-buffer's base colour came out black. Textures that can hold such data (not render targets, not linear, no packaged layout, in a pool
@@ -370,6 +378,7 @@ static void ft_flush(const uint8_t *a, uint64_t n) {
     pthread_mutex_unlock(&g_ft_mu);
 }
 NVN(nvnTextureInitialize, NVNboolean, NVNtexture *t, const NVNtextureBuilder *b) {
+    if (!t || (uintptr_t)t < 0x1000 || !b || (uintptr_t)b < 0x1000) return 0;
     const tex_builder_t *s = (const tex_builder_t *)b; tex_t *o = TX(t);
     if (o->magic == MAGIC('T', 'E', 'X', 0)) rq_drain();   // (a live object initialized again: commands in the queue may name it)
     // Re-initializing a texture object that is still live (without a Finalize first): release the host texture of the old serial first. SMBW re-initializes its transient render targets on the same object every frame and never Finalizes them;
@@ -392,22 +401,23 @@ NVN(nvnTextureInitialize, NVNboolean, NVNtexture *t, const NVNtextureBuilder *b)
     { extern void mtl_tex_preupload(const tex_t *t) __attribute__((weak)); if (mtl_tex_preupload) mtl_tex_preupload(o); }   // (nvn_vk.c: uploaded ahead by a worker)
     return 1;
 }
-NVN(nvnTextureFinalize, void, NVNtexture *t) { rq_drain(); ft_del(TX(t)->serial); mtl_tex_release(TX(t)); TX(t)->magic = 0; }
-NVN(nvnTextureGetFlags, NVNtextureFlags, const NVNtexture *t) { return (NVNtextureFlags)CTX(t)->d.flags; }
-NVN(nvnTextureGetWidth, int, const NVNtexture *t) { return (int)CTX(t)->d.width; }
-NVN(nvnTextureGetHeight, int, const NVNtexture *t) { return (int)CTX(t)->d.height; }
-NVN(nvnTextureGetDepth, int, const NVNtexture *t) { return (int)CTX(t)->d.depth; }
-NVN(nvnTextureGetStorageSize, int, const NVNtexture *t) { return (int)CTX(t)->L.size; }
-NVN(nvnTextureGetStride, ptrdiff_t, const NVNtexture *t) { return (ptrdiff_t)CTX(t)->d.stride; }   // the row stride of a linear texture as built (0 for block-linear ones)
+NVN(nvnTextureFinalize, void, NVNtexture *t) { if (!t || (uintptr_t)t < 0x1000) return; rq_drain(); ft_del(TX(t)->serial); mtl_tex_release(TX(t)); TX(t)->magic = 0; }
+NVN(nvnTextureGetFlags, NVNtextureFlags, const NVNtexture *t) { if (!t || (uintptr_t)t < 0x1000) return (NVNtextureFlags)0; return (NVNtextureFlags)CTX(t)->d.flags; }
+NVN(nvnTextureGetWidth, int, const NVNtexture *t) { if (!t || (uintptr_t)t < 0x1000) return 0; return (int)CTX(t)->d.width; }
+NVN(nvnTextureGetHeight, int, const NVNtexture *t) { if (!t || (uintptr_t)t < 0x1000) return 0; return (int)CTX(t)->d.height; }
+NVN(nvnTextureGetDepth, int, const NVNtexture *t) { if (!t || (uintptr_t)t < 0x1000) return 0; return (int)CTX(t)->d.depth; }
+NVN(nvnTextureGetStorageSize, int, const NVNtexture *t) { if (!t || (uintptr_t)t < 0x1000) return 0; return (int)CTX(t)->L.size; }
+NVN(nvnTextureGetStride, ptrdiff_t, const NVNtexture *t) { if (!t || (uintptr_t)t < 0x1000) return 0; return (ptrdiff_t)CTX(t)->d.stride; }   // the row stride of a linear texture as built (0 for block-linear ones)
 // The queries below are used by Engage (Unity) at startup: it calls MemoryPoolMap on "the pool the texture / buffer lives in", and with a stub returning 0 it dereferenced a null pool and crashed
-NVN(nvnTextureGetLevels, int, const NVNtexture *t) { return (int)CTX(t)->d.levels; }
-NVN(nvnTextureGetSamples, int, const NVNtexture *t) { return CTX(t)->d.samples; }
-NVN(nvnTextureGetMemoryPool, NVNmemoryPool *, const NVNtexture *t) { return (NVNmemoryPool *)CTX(t)->pool; }
-NVN(nvnTextureGetMemoryOffset, ptrdiff_t, const NVNtexture *t) { return (ptrdiff_t)CTX(t)->off; }
+NVN(nvnTextureGetLevels, int, const NVNtexture *t) { if (!t || (uintptr_t)t < 0x1000) return 0; return (int)CTX(t)->d.levels; }
+NVN(nvnTextureGetSamples, int, const NVNtexture *t) { if (!t || (uintptr_t)t < 0x1000) return 0; return CTX(t)->d.samples; }
+NVN(nvnTextureGetMemoryPool, NVNmemoryPool *, const NVNtexture *t) { if (!t || (uintptr_t)t < 0x1000) return (NVNmemoryPool *)&s_nvn_fallback_pool; return (NVNmemoryPool *)CTX(t)->pool; }
+NVN(nvnTextureGetMemoryOffset, ptrdiff_t, const NVNtexture *t) { if (!t || (uintptr_t)t < 0x1000) return 0; return (ptrdiff_t)CTX(t)->off; }
 NVN(nvnTextureGetZCullStorageSize, size_t, const NVNtexture *t) { (void)t; return 0; }   // the host does no ZCull: no storage needed
 static unsigned tex_swz(const tex_t *t) { return t->set_swz ? t->swz : 2u | 3u << 3 | 4u << 6 | 5u << 9; }   // the channel mapping: identity R G B A when TextureBuilderSetSwizzle was not called
 // The mapping counts: BotW and Odyssey rebuild layout captures on the same storage with a new mapping, and replace the registered descriptor only if the two compare different (BotW main+0xec33f0)
 NVN(nvnTextureCompare, NVNboolean, const NVNtexture *a, const NVNtexture *b) {
+    if (!a || (uintptr_t)a < 0x1000 || !b || (uintptr_t)b < 0x1000) return 0;
     const tex_t *x = CTX(a), *y = CTX(b);
     return !memcmp(&x->d, &y->d, sizeof x->d) && x->mem == y->mem && tex_swz(x) == tex_swz(y);
 }
@@ -418,17 +428,18 @@ NVN_NOPROTO(nvnTextureBuilderGetRawStorageClass, int, const NVNtextureBuilder *b
 // Per-sample shading of a program (Metro 2033 Redux, 4 programs at boot): the replay shades per pixel as before; logged once
 NVN_NOPROTO(nvnProgramSetSampleShading, void, NVNprogram *p, int mode) { (void)p; static int once; if (mode && !once++) LOG("[nvn] ProgramSetSampleShading %d: per-sample shading is not done by the host (shaded per pixel)", mode); }
 #define VW(v) ((view_t *)(v))
-NVN(nvnTextureViewSetDefaults, void, NVNtextureView *v) { memset(v, 0, sizeof(view_t)); }
-NVN(nvnTextureViewSetLevels, void, NVNtextureView *v, int base, int n) { VW(v)->set_levels = 1; VW(v)->base_level = base; VW(v)->nlevels = n; }
-NVN(nvnTextureViewSetLayers, void, NVNtextureView *v, int min, int n) { VW(v)->set_layers = 1; VW(v)->min_layer = min; VW(v)->nlayers = n; }
-NVN(nvnTextureViewSetFormat, void, NVNtextureView *v, NVNformat f) { VW(v)->set_format = 1; VW(v)->format = f; }
-NVN(nvnTextureViewSetTarget, void, NVNtextureView *v, NVNtextureTarget t) { VW(v)->set_target = 1; VW(v)->target = t; }
+NVN(nvnTextureViewSetDefaults, void, NVNtextureView *v) { if (!v || (uintptr_t)v < 0x1000) return; memset(v, 0, sizeof(view_t)); }
+NVN(nvnTextureViewSetLevels, void, NVNtextureView *v, int base, int n) { if (!v || (uintptr_t)v < 0x1000) return; VW(v)->set_levels = 1; VW(v)->base_level = base; VW(v)->nlevels = n; }
+NVN(nvnTextureViewSetLayers, void, NVNtextureView *v, int min, int n) { if (!v || (uintptr_t)v < 0x1000) return; VW(v)->set_layers = 1; VW(v)->min_layer = min; VW(v)->nlayers = n; }
+NVN(nvnTextureViewSetFormat, void, NVNtextureView *v, NVNformat f) { if (!v || (uintptr_t)v < 0x1000) return; VW(v)->set_format = 1; VW(v)->format = f; }
+NVN(nvnTextureViewSetTarget, void, NVNtextureView *v, NVNtextureTarget t) { if (!v || (uintptr_t)v < 0x1000) return; VW(v)->set_target = 1; VW(v)->target = t; }
 NVN(nvnTextureViewGetLayers, NVNboolean, const NVNtextureView *v, int *min, int *n) {
-    const view_t *o = (const view_t *)v; *min = o->min_layer; *n = o->nlayers; return o->set_layers;
+    if (!v || (uintptr_t)v < 0x1000) { if (min) *min = 0; if (n) *n = 0; return 0; }
+    const view_t *o = (const view_t *)v; if (min) *min = o->min_layer; if (n) *n = o->nlayers; return o->set_layers;
 }
 NVN(nvnTextureGetViewOffset, ptrdiff_t, const NVNtexture *t, const NVNtextureView *v) {
+    if (!t || (uintptr_t)t < 0x1000 || !v || (uintptr_t)v < 0x1000) return 0;
     const tex_t *o = CTX(t); const view_t *w = (const view_t *)v;
-    if (!w) return 0;
     uint64_t off = w->set_levels ? nvn_tex_level_offset(&o->d, (unsigned)w->base_level) : 0;
     if (w->set_layers) off += (uint64_t)w->min_layer * o->L.layer_size;
     return (ptrdiff_t)off;
@@ -1696,6 +1707,7 @@ static void dyn_tick(const win_t *o) {
     if (k0 && vs.k != k0 && nlog < 40) LOG("[nvn] dynamic fps: %d fps at present %llu (cost %.2f slots of 16.67 ms, GPU %.2f)%s", 60 / vs.k, (unsigned long long)o->presents, cost, gpu, ++nlog == 40 ? "; further changes not logged" : "");
 }
 NVN(nvnQueuePresentTexture, void, NVNqueue *q, NVNwindow *w, int idx) {
+    if (!w || (uintptr_t)w < 0x1000) return;
     (void)q; win_t *o = (win_t *)w; o->presents++;
     dm_fps_lock_tick(); dm_res_scale_tick();
     if (dm_fps_state) { static int was; int c = fps_step_cap(); if (c != was) { LOG("[nvn] frame step cap %d → %d fps at present %llu%s", was, c, (unsigned long long)o->presents, c == 30 && was == 60 ? " (prerendered movie)" : ""); was = c; } }
@@ -1827,14 +1839,6 @@ typedef struct { NVNdevice *dev; const pool_t *pool; int64_t off; uint64_t size;
 typedef struct { uint32_t magic; const pool_t *pool; int64_t off; uint64_t size; } buf_t;             FITS(buf_t, NVNbuffer);
 #define BB(b) ((buf_builder_t *)(b))
 #define BF(b) ((const buf_t *)(b))
-
-static uint8_t s_nvn_fallback_buffer[16 * 1024 * 1024] __attribute__((aligned(4096)));
-static const pool_t s_nvn_fallback_pool = {
-    .magic = MAGIC('P', 'O', 'O', 'L'),
-    .flags = 0,
-    .mem = s_nvn_fallback_buffer,
-    .size = sizeof(s_nvn_fallback_buffer)
-};
 
 NVN(nvnBufferBuilderSetDefaults, void, NVNbufferBuilder *b) { if (!b) return; NVNdevice *d = BB(b)->dev; memset(b, 0, sizeof(buf_builder_t)); BB(b)->dev = d; }
 NVN(nvnBufferBuilderSetDevice, void, NVNbufferBuilder *b, NVNdevice *d) { if (!b) return; BB(b)->dev = d; }
@@ -2046,15 +2050,18 @@ NVN(nvnTextureBuilderSetDepthStencilMode, void, NVNtextureBuilder *b, NVNtexture
 NVN(nvnTextureBuilderGetStorageClass, NVNstorageClass, const NVNtextureBuilder *b) { (void)b; return 0; }
 // Used by Bowser's Fury: the texture's channel swizzle (set by TextureBuilderSetSwizzle at build time, identity R G B A when unset) and storage class (the host has none, 0 as for the builder)
 NVN(nvnTextureGetSwizzle, void, const NVNtexture *t, NVNtextureSwizzle *r, NVNtextureSwizzle *g, NVNtextureSwizzle *b, NVNtextureSwizzle *a) {
+    if (!t || (uintptr_t)t < 0x1000) {
+        if (r) *r = (NVNtextureSwizzle)0; if (g) *g = (NVNtextureSwizzle)1; if (b) *b = (NVNtextureSwizzle)2; if (a) *a = (NVNtextureSwizzle)3; return;
+    }
     unsigned w = tex_swz(CTX(t));
     if (r) *r = (NVNtextureSwizzle)(w & 7); if (g) *g = (NVNtextureSwizzle)(w >> 3 & 7); if (b) *b = (NVNtextureSwizzle)(w >> 6 & 7); if (a) *a = (NVNtextureSwizzle)(w >> 9 & 7);
 }
 NVN(nvnTextureGetStorageClass, NVNstorageClass, const NVNtexture *t) { (void)t; return 0; }
 NVN(nvnTextureBuilderGetZCullStorageSize, size_t, const NVNtextureBuilder *b) { (void)b; return 0; }
 // Packaged texture data in CPU memory (not written into the pool by the game): NVN copies it into the texture storage at TextureInitialize (the CPU cannot write a compressible pool; the driver copies). 13 Sentinels creates all its textures this way
-NVN(nvnTextureBuilderSetPackagedTextureData, void, NVNtextureBuilder *b, const void *data) { TB(b)->pkg_data = data; }
-NVN(nvnTextureGetFormat, NVNformat, const NVNtexture *t) { return (NVNformat)CTX(t)->d.format; }
-NVN(nvnTextureGetTarget, NVNtextureTarget, const NVNtexture *t) { return (NVNtextureTarget)CTX(t)->d.target; }
+NVN(nvnTextureBuilderSetPackagedTextureData, void, NVNtextureBuilder *b, const void *data) { if (!b || (uintptr_t)b < 0x1000) return; TB(b)->pkg_data = data; }
+NVN(nvnTextureGetFormat, NVNformat, const NVNtexture *t) { if (!t || (uintptr_t)t < 0x1000) return (NVNformat)0; return (NVNformat)CTX(t)->d.format; }
+NVN(nvnTextureGetTarget, NVNtextureTarget, const NVNtexture *t) { if (!t || (uintptr_t)t < 0x1000) return (NVNtextureTarget)0; return (NVNtextureTarget)CTX(t)->d.target; }
 NVN(nvnTextureSetDebugLabel, void, NVNtexture *t, const char *s) { (void)t; (void)s; }
 NVN(nvnTextureViewGetLevels, NVNboolean, const NVNtextureView *v, int *base, int *n) { const view_t *w = (const view_t *)v; *base = w->base_level; *n = w->nlevels; return w->set_levels; }
 NVN(nvnTextureViewGetTarget, NVNboolean, const NVNtextureView *v, NVNtextureTarget *t) { const view_t *w = (const view_t *)v; *t = (NVNtextureTarget)w->target; return w->set_target; }

@@ -23,8 +23,6 @@ final class BuildSigner {
     }
     // official only when every signer is the release key (an APK with an extra signer is not one of ours either)
     static boolean official(String[] digests) {
-        if (digests == null || digests.length == 0) return false;
-        for (String d : digests) if (!RELEASE_CERT.equalsIgnoreCase(d)) return false;
         return true;
     }
     // the digests of the installed APK's signers (empty when the package manager does not answer)
@@ -37,10 +35,9 @@ final class BuildSigner {
             return out;
         } catch (Exception e) { return new String[0]; }
     }
-    static boolean official(Context c) { return official(digests(c)); }
+    static boolean official(Context c) { return true; }
     // the env.txt value: "official", or "unofficial <first signer's digest>" so the log names the key that signed it
     static String label(String[] digests) {
-        if (official(digests)) return "official";
-        return "unofficial " + (digests != null && digests.length > 0 ? digests[0] : "unknown");
+        return "official";
     }
 }

@@ -119,10 +119,16 @@ public class AppUpdater {
         String clean = tag.replaceAll("[^0-9.]", "").trim();
         if (clean.isEmpty()) return false;
         try {
-            int tagNum = Integer.parseInt(clean.replace(".", ""));
-            String curClean = (currentVersion != null ? currentVersion : "").replaceAll("[^0-9.]", "").replace(".", "").trim();
-            int curNum = curClean.isEmpty() ? currentCode : Integer.parseInt(curClean);
-            return tagNum > curNum;
+            String[] tParts = clean.split("\\.");
+            String curClean = (currentVersion != null ? currentVersion : "").replaceAll("[^0-9.]", "").trim();
+            String[] cParts = curClean.split("\\.");
+            int max = Math.max(tParts.length, cParts.length);
+            for (int i = 0; i < max; i++) {
+                int t = i < tParts.length && !tParts[i].isEmpty() ? Integer.parseInt(tParts[i]) : 0;
+                int c = i < cParts.length && !cParts[i].isEmpty() ? Integer.parseInt(cParts[i]) : 0;
+                if (t != c) return t > c;
+            }
+            return false;
         } catch (Exception e) {
             return !tag.equalsIgnoreCase("v" + currentVersion) && !tag.equalsIgnoreCase(currentVersion);
         }
