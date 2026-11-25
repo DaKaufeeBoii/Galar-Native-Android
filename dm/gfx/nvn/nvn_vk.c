@@ -895,6 +895,9 @@ void mtl_pool_add(const void *mem, uint64_t size) {
             // pages untouched so far) takes the route below on its own
             if (g_fdmap > 0) RED_ONCE(103, "memory pool %p+%#llx: GPU memory export failed: this pool and any other that fails go the mremap route", mem, (unsigned long long)size);
             else { VLOG("memory pools: the driver's memory cannot be exported and mapped (errno %d): moving its mappings instead (mremap)", errno); g_fdmap = 0; }
+            // The memory was allocated with VkMemoryDedicatedAllocateInfo for this buffer. If exporting it fails, retain that
+            // dedicated allocation chain for the fallback too: the buffer's requirements may reject a plain allocation.
+            mai.pNext = &ded;
             if (first) fd_export_mark(-1);
         }
 #endif

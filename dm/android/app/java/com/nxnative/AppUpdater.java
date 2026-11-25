@@ -2,23 +2,13 @@ package com.nxnative;
 
 import android.app.Activity;
 import android.app.AlertDialog;
-import android.app.DownloadManager;
-import android.content.BroadcastReceiver;
-import android.content.Context;
 import android.content.Intent;
-import android.content.IntentFilter;
 import android.content.pm.PackageInfo;
 import android.net.Uri;
-import android.os.Build;
-import android.os.Environment;
-import android.provider.Settings;
 import android.widget.Toast;
 
-import org.json.JSONArray;
 import org.json.JSONObject;
 
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
 import java.net.URL;
 
@@ -31,171 +21,121 @@ public class AppUpdater {
             try {
                 String repo = DEFAULT_REPO;
                 String[] appInfo = GameSettings.app(a);
-                if (appInfo.length >= 2 && appInfo[1] != null && appInfo[1].contains("/")) {
-                    String r = appInfo[1].replace("github.com/", "").trim();
-                    if (!r.isEmpty()) repo = r;
+                if (appInfo.length >= 2 && appInfo[1] != null) {
+                    String configured = appInfo[1].replace("https://", "").replace("http://", "").replace("github.com/", "").replaceAll("/+$", "").trim();
+                    if (configured.matches("[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")) repo = configured;
                 }
-
                 JSONObject release = fetchLatestRelease(repo);
-                if (release == null && !repo.equals(UPSTREAM_REPO)) {
-                    release = fetchLatestRelease(UPSTREAM_REPO);
-                }
+                if (release == null && !repo.equalsIgnoreCase(UPSTREAM_REPO)) release = fetchLatestRelease(UPSTREAM_REPO);
 
                 if (release == null) {
                     if (!quiet) showToast(a, "Could not check for updates. Check internet connection.");
                     return;
                 }
 
-                String tagName = release.optString("tag_name", "");
-                String releaseName = release.optString("name", tagName);
-                String releaseBody = release.optString("body", "");
-
-                // Find APK asset download URL
-                String apkUrl = null;
-                String apkName = "GalarNative-Update.apk";
-                JSONArray assets = release.optJSONArray("assets");
-                if (assets != null) {
-                    for (int i = 0; i < assets.length(); i++) {
-                        JSONObject asset = assets.getJSONObject(i);
-                        String name = asset.optString("name", "");
-                        if (name.endsWith(".apk")) {
-                            apkUrl = asset.optString("browser_download_url", null);
-                            apkName = name;
-                            break;
-                        }
-                    }
-                }
-
-                if (apkUrl == null) {
-                    if (!quiet) showToast(a, "No APK asset found in latest release.");
-                    return;
-                }
+                String tagName = release.optString("tag", "");
+                String releaseVersion = tagName;
+                String releaseName = "Galar Native " + tagName;
+                String releaseBody = "A newer release is available. Open the official release page to read its notes and download it.";
+                String apkUrl = "https://github.com/" + repo + "/releases";
 
                 // Check version
-                int currentCode = 0;
                 String currentVersion = "";
                 try {
                     PackageInfo pInfo = a.getPackageManager().getPackageInfo(a.getPackageName(), 0);
-                    currentCode = pInfo.versionCode;
                     currentVersion = pInfo.versionName;
                 } catch (Exception ignored) {}
 
-                if (isNewer(tagName, currentCode, currentVersion)) {
+                if (isNewer(releaseVersion, currentVersion)) {
                     final String finalApkUrl = apkUrl;
-                    final String finalApkName = apkName;
-                    a.runOnUiThread(() -> showUpdateDialog(a, releaseName, releaseBody, finalApkUrl, finalApkName));
+                    a.runOnUiThread(() -> showUpdateDialog(a, releaseName, releaseBody, finalApkUrl));
                 } else {
                     if (!quiet) showToast(a, "You are using the latest version (" + currentVersion + ").");
                 }
-            } catch (Exception e) {
-                if (!quiet) showToast(a, "Update check failed: " + e.getMessage());
+            } catch (Throwable t) {
+                if (!quiet) showToast(a, "Update check failed: " + t.getMessage());
             }
         }).start();
     }
 
     private static JSONObject fetchLatestRelease(String repo) {
         try {
-            URL url = new URL("https://api.github.com/repos/" + repo + "/releases/latest");
+            URL url = new URL("https://github.com/" + repo + "/releases.atom");
             HttpURLConnection conn = (HttpURLConnection) url.openConnection();
             conn.setRequestMethod("GET");
             conn.setRequestProperty("User-Agent", "GalarNative-Android");
-            conn.setRequestProperty("Accept", "application/vnd.github.v3+json");
+            conn.setRequestProperty("Accept", "application/atom+xml");
             conn.setConnectTimeout(8000);
             conn.setReadTimeout(8000);
             if (conn.getResponseCode() != 200) return null;
 
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(conn.getInputStream(), "UTF-8"))) {
-                StringBuilder sb = new StringBuilder();
+            try (java.io.InputStream in = conn.getInputStream();
+                 java.io.BufferedReader reader = new java.io.BufferedReader(new java.io.InputStreamReader(in, "UTF-8"))) {
+                java.util.regex.Pattern pattern = java.util.regex.Pattern.compile("<id>[^<]*/tag/([^<]+)</id>");
                 String line;
-                while ((line = reader.readLine()) != null) sb.append(line);
-                return new JSONObject(sb.toString());
+                while ((line = reader.readLine()) != null) {
+                    java.util.regex.Matcher matcher = pattern.matcher(line);
+                    if (matcher.find()) {
+                        String tag = matcher.group(1).trim();
+                        if (!tag.isEmpty()) {
+                            JSONObject result = new JSONObject();
+                            result.put("tag", tag);
+                            return result;
+                        }
+                    }
+                }
+                return null;
             }
-        } catch (Exception e) {
+        } catch (Throwable t) {
             return null;
         }
     }
 
-    private static boolean isNewer(String tag, int currentCode, String currentVersion) {
-        String clean = tag.replaceAll("[^0-9.]", "").trim();
-        if (clean.isEmpty()) return false;
+    private static int compareVersions(String a, String b) {
         try {
-            String[] tParts = clean.split("\\.");
-            String curClean = (currentVersion != null ? currentVersion : "").replaceAll("[^0-9.]", "").trim();
-            String[] cParts = curClean.split("\\.");
+            String cleanA = normalizeVersion(a), cleanB = normalizeVersion(b);
+            if (cleanA.isEmpty() || cleanB.isEmpty()) return 0;
+            String[] tParts = cleanA.split("\\.");
+            String[] cParts = cleanB.split("\\.");
             int max = Math.max(tParts.length, cParts.length);
             for (int i = 0; i < max; i++) {
                 int t = i < tParts.length && !tParts[i].isEmpty() ? Integer.parseInt(tParts[i]) : 0;
                 int c = i < cParts.length && !cParts[i].isEmpty() ? Integer.parseInt(cParts[i]) : 0;
-                if (t != c) return t > c;
+                if (t != c) return Integer.compare(t, c);
             }
-            return false;
+            return 0;
         } catch (Exception e) {
-            return !tag.equalsIgnoreCase("v" + currentVersion) && !tag.equalsIgnoreCase(currentVersion);
+            return 0;
         }
+    }
+
+    private static String normalizeVersion(String value) {
+        String s = value == null ? "" : value.trim().toLowerCase(java.util.Locale.ROOT);
+        if (s.startsWith("v")) s = s.substring(1);
+        // Releases built by build_apk.py use 0.<versionCode>; older repacks use 1.0.<versionCode>.
+        if (s.matches("1\\.0\\.\\d+")) s = s.substring(4);
+        return s.matches("\\d+(\\.\\d+)*") ? s : "";
+    }
+
+    private static boolean isNewer(String version, String currentVersion) {
+        return compareVersions(version, currentVersion) > 0;
     }
 
     private static void showToast(Activity a, String msg) {
         a.runOnUiThread(() -> Toast.makeText(a, msg, Toast.LENGTH_SHORT).show());
     }
 
-    private static void showUpdateDialog(Activity a, String title, String notes, String apkUrl, String apkName) {
+    private static void showUpdateDialog(Activity a, String title, String notes, String apkUrl) {
         new AlertDialog.Builder(a)
             .setTitle("Update Available: " + title)
             .setMessage(notes.isEmpty() ? "A new version of Galar Native is available." : notes)
-            .setPositiveButton("Download & Install", (dialog, which) -> downloadAndInstall(a, apkUrl, apkName))
+            .setPositiveButton("Open release page", (dialog, which) -> openReleasePage(a, apkUrl))
             .setNegativeButton("Later", null)
             .show();
     }
 
-    public static void downloadAndInstall(Activity a, String apkUrl, String apkName) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            if (!a.getPackageManager().canRequestPackageInstalls()) {
-                Toast.makeText(a, "Please allow Galar Native to install updates", Toast.LENGTH_LONG).show();
-                try {
-                    a.startActivity(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + a.getPackageName())));
-                } catch (Exception ignored) {}
-            }
-        }
-
-        Toast.makeText(a, "Downloading " + apkName + "...", Toast.LENGTH_SHORT).show();
-
-        try {
-            DownloadManager dm = (DownloadManager) a.getSystemService(Context.DOWNLOAD_SERVICE);
-            DownloadManager.Request request = new DownloadManager.Request(Uri.parse(apkUrl));
-            request.setTitle("Galar Native Update");
-            request.setDescription("Downloading latest release APK");
-            request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
-            request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, apkName);
-
-            final long downloadId = dm.enqueue(request);
-
-            BroadcastReceiver receiver = new BroadcastReceiver() {
-                @Override
-                public void onReceive(Context context, Intent intent) {
-                    long id = intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1);
-                    if (id == downloadId) {
-                        try {
-                            context.unregisterReceiver(this);
-                        } catch (Exception ignored) {}
-
-                        Uri uri = dm.getUriForDownloadedFile(downloadId);
-                        if (uri != null) {
-                            Intent install = new Intent(Intent.ACTION_VIEW);
-                            install.setDataAndType(uri, "application/vnd.android.package-archive");
-                            install.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_GRANT_READ_URI_PERMISSION);
-                            context.startActivity(install);
-                        }
-                    }
-                }
-            };
-
-            if (Build.VERSION.SDK_INT >= 33) {
-                a.registerReceiver(receiver, new IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE), 2); // Context.RECEIVER_EXPORTED = 2
-            } else {
-                a.registerReceiver(receiver, new IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE));
-            }
-        } catch (Exception e) {
-            Toast.makeText(a, "Download failed: " + e.getMessage(), Toast.LENGTH_LONG).show();
-        }
+    private static void openReleasePage(Activity a, String url) {
+        try { a.startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url))); }
+        catch (Exception e) { Toast.makeText(a, "Could not open the official release page: " + e.getMessage(), Toast.LENGTH_LONG).show(); }
     }
 }
